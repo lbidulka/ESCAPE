@@ -28,6 +28,8 @@ from hybrik.utils.transforms import get_func_heatmap_to_coord
 import uncertnet.distal_cnet as uncertnet_models
 from utils import eval
 
+from uncertnet.cnet_all import adapt_net
+
 def get_config():
     config = SimpleNamespace()
     #
@@ -36,12 +38,14 @@ def get_config():
     #
 
     # HybrIK config
-    # config.cfg = 'configs/256x192_adam_lr1e-3-res34_smpl_3d_cam_2x_mix.yaml'
-    # config.ckpt = 'pretrained_w_cam.pth'
+    config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
 
-    config.cfg = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_wo_pw3d.yaml'    # w/o 3DPW
-    config.ckpt = 'hybrik_hrnet48_wo3dpw.pth'    
-    
+    if config.hybrIK_version == 'res34_cam':
+        config.cfg = 'configs/256x192_adam_lr1e-3-res34_smpl_3d_cam_2x_mix.yaml'
+        config.ckpt = 'pretrained_w_cam.pth'
+    if config.hybrIK_version == 'hrw48_wo_3dpw':
+        config.cfg = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_wo_pw3d.yaml'    # w/o 3DPW
+        config.ckpt = 'hybrik_hrnet48_wo3dpw.pth'    
 
     # 3DPW data
     config.data_3DPW_dir = '/media/ExtHDD01/Mohsen_data/3DPW'
@@ -106,8 +110,9 @@ cfg = update_config(config.cfg)
 
 def create_cnet_dataset(m, opt, cfg, gt_dataset, task='train'):
     # Data/Setup
-    gt_loader=torch.utils.data.DataLoader(gt_dataset, batch_size=64, shuffle=False, num_workers=16, drop_last=False)
+    gt_loader=torch.utils.data.DataLoader(gt_dataset, batch_size=128, shuffle=False, num_workers=8, drop_last=False)
     m.eval()
+    m = m.to('cuda')
 
     hm_shape = cfg.MODEL.get('HEATMAP_SIZE')
     hm_shape = (hm_shape[1], hm_shape[0])
@@ -132,12 +137,12 @@ def create_cnet_dataset(m, opt, cfg, gt_dataset, task='train'):
         backbone_preds.append(backbone_pred.detach().cpu().numpy())
         target_xyz_17s.append(labels['target_xyz_17'].detach().cpu().numpy())
 
-    np.save(config.cnet_dataset_path + 'cnet_hybrik_' + task + '.npy', np.array([np.concatenate(backbone_preds, axis=0), 
-                                                                np.concatenate(target_xyz_17s, axis=0)]))
+    dataset_outpath = '{}{}_cnet_hybrik_{}.npy'.format(config.cnet_dataset_path, config.hybrIK_version, task)
+    np.save(dataset_outpath, np.array([np.concatenate(backbone_preds, axis=0), np.concatenate(target_xyz_17s, axis=0)]))
     return
 
 def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=False, test_cnet=False, use_data_file=False):
-    batch_size = 256
+    batch_size = 128
     # Data/Setup
     if use_data_file:
         gt_eval_dataset = torch.utils.data.TensorDataset(torch.from_numpy(np.load(config.cnet_dataset_path + 'test.npy')).float())
@@ -146,14 +151,6 @@ def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=F
     kpt_all_pred = {}
     m.eval()
     cnet.eval()
-    # if hasattr(cnet_RArm, 'eval'):
-    #     cnet_RArm.net.eval()
-    # if hasattr(cnet_LArm, 'eval'):
-    #     cnet_LArm.net.eval()
-    # if hasattr(cnet_RLeg, 'eval'):
-    #     cnet_RLeg.net.eval()
-    # if hasattr(cnet_LLeg, 'eval'):
-    #     cnet_LLeg.net.eval()
 
     hm_shape = cfg.MODEL.get('HEATMAP_SIZE')
     hm_shape = (hm_shape[1], hm_shape[0])
@@ -184,12 +181,6 @@ def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=F
             backbone_pred = backbone_pred.reshape(inps.shape[0], -1, 3)
             
             corrected_pred = cnet(backbone_pred)
-
-            # get l2 errors
-            gt_err = torch.sqrt(torch.sum((backbone_pred - labels['target_xyz_17'].reshape(inps.shape[0], -1, 3)) ** 2, dim=2)).sum(dim=1)
-            s_err = torch.sqrt(torch.sum((corrected_pred - backbone_pred) ** 2, dim=2)).sum(dim=1)
-            errs.append(gt_err.detach().cpu().numpy())
-            errs_s.append(s_err.detach().cpu().numpy())
 
             output.pred_xyz_jts_17 = corrected_pred.reshape(inps.shape[0], -1)
 
@@ -240,10 +231,6 @@ def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=F
             }
         kpt_all_pred.update(kpt_pred)
 
-    # print('len(kpt_pred)', len(kpt_all_pred))
-    if test_cnet:
-        eval.plot_errs_err(np.concatenate(errs), np.concatenate(errs_s), '../../err_corr.png')
-
     tot_err_17 = gt_eval_dataset.evaluate_xyz_17(kpt_all_pred, os.path.join('exp', 'test_3d_kpt.json'))
     if test_vertice:
         print(f'PVE: {np.mean(pve_list)}')
@@ -280,14 +267,19 @@ def main_worker(opt, cfg, model=None):
         root='/media/ExtHDD01/Mohsen_data/3DPW')
 
     # print('##### Creating CNET 3DPW Dataset #####')
-    m = m.to('cuda')
-    # create_cnet_dataset(m, opt, cfg, gt_train_dataset_3dpw, task='train')
-    # create_cnet_dataset(m, opt, cfg, gt_test_dataset_3dpw, task='test')
+    with torch.no_grad():
+        pass
+        # create_cnet_dataset(m, opt, cfg, gt_train_dataset_3dpw, task='train')
+        # create_cnet_dataset(m, opt, cfg, gt_test_dataset_3dpw, task='test')
+    m = m.to('cpu')
 
     config.train_datalim = None
     # config.train_datalim = 5_000
 
-    cnet = uncertnet_models.multi_distal_cnet(config)
+    # cnet = uncertnet_models.multi_distal_cnet(config)
+    # cnet = uncertnet_models.all_limb_cnet(config) 
+    cnet = adapt_net(config)
+
     cnet.train()
     cnet.load_cnets()
 
@@ -297,27 +289,14 @@ def main_worker(opt, cfg, model=None):
     print('\n##### 3DPW TESTSET ERRS #####\n')
     with torch.no_grad():
         gt_tot_err = eval_gt(m, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True)
-    print(f'\n   --- CORR gt 3dpw err: {gt_tot_err:.5f} ---')
-    
+
+    print('\n--- Vanilla: --- ')
     # with torch.no_grad():
     #     gt_tot_err = eval_gt(m, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False)
-    print('\n--- Vanilla: --- ')
-    # print('XYZ_14 PA-MPJPE: 45.917672 | MPJPE: 74.113751, x: 27.145215, y: 28.64, z: 51.785723')  # w/ 3DPW
-    print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
-    print(f'   --- gt 3dpw err: {gt_tot_err:.5f} ---')
-
-    # --- TRAIN SET EVAL ---
-    # print('\n##### 3DPW TRAINSET ERRS #####\n')
-    # # with torch.no_grad():
-    # #     gt_tot_err = eval_gt(m, cnet, opt, cfg, gt_train_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False)
-    # gt_tot_err = 20.222132
-    # print('\nVanilla: ')
-    # print('XYZ_14 PA-MPJPE: 20.222132 | MPJPE: 25.347171, x: 11.807246, y: 10.16, z: 15.479976')
-    # print(f'--- gt 3dpw err: {gt_tot_err:.5f} ---')
-
-    # with torch.no_grad():
-    #     gt_tot_err = eval_gt(m, cnet, opt, cfg, gt_train_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True)
-    # print(f'\n--- CORR gt 3dpw err: {gt_tot_err} ---\n')
+    if config.hybrIK_version == 'res34_cam':
+        print('XYZ_14 PA-MPJPE: 45.917672 | MPJPE: 74.113751, x: 27.145215, y: 28.64, z: 51.785723')  # w/ 3DPW
+    if config.hybrIK_version == 'hrw48_wo_3dpw':
+        print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
     
 
 def load_pretrained_hybrik(ckpt=config.ckpt):
