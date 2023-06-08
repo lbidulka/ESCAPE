@@ -266,6 +266,8 @@ def main_worker(opt, cfg, model=None):
         train=False,
         root='/media/ExtHDD01/Mohsen_data/3DPW')
 
+    print(' USING HYBRIK VER: {}'.format(config.hybrIK_version))
+
     # print('##### Creating CNET 3DPW Dataset #####')
     with torch.no_grad():
         pass

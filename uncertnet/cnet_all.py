@@ -131,6 +131,7 @@ class adapt_net():
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Paths
+        self.config.ckpt_name = self.config.hybrIK_version + 'cnet_all.pth'
         self.config.data_path = '{}{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, 
                                                                  config.hybrIK_version,)
 
@@ -163,7 +164,7 @@ class adapt_net():
         corr_pred[:, self.distal_kpts, :] -= pred_errs
         return corr_pred               
 
-    def train(self, ckpt_name='cnet_all.pth',):
+    def train(self,):
         # data_path = self.config.cnet_dataset_path + 'cnet_hybrik_train.npy'
         if self.config.train_datalim is not None:
             data_all = torch.from_numpy(np.load(self.config.data_path)).float()[:, :self.config.train_datalim]
@@ -177,8 +178,6 @@ class adapt_net():
         data_val = data_val.permute(1,0,2)
         data_train = data_train.reshape(data_train.shape[0], 2, -1, 3) # batch, 2, kpts, xyz)
         data_val = data_val.reshape(data_val.shape[0], 2, -1, 3)
-
-        save_path = self.config.cnet_ckpt_path + ckpt_name
 
         # Data
         batch_size = 1024
@@ -227,7 +226,7 @@ class adapt_net():
             
             if mean_val_loss < best_val_loss:
                 print(" ---> best val loss so far, saving model...")
-                self.save(save_path)
+                self.save(self.config.cnet_ckpt_path + self.config.ckpt_name)
                 best_val_loss = mean_val_loss
         return
 
@@ -235,10 +234,13 @@ class adapt_net():
         '''
         Load the best validation checkpoints
         '''
-        all_net_ckpt_dict = torch.load(self.config.cnet_ckpt_path + 'cnet_all.pth')
+        load_path = self.config.cnet_ckpt_path + self.config.ckpt_name
+        print("Loading cnet from: ", load_path)
+        all_net_ckpt_dict = torch.load(load_path)
         self.cnet.load_state_dict(all_net_ckpt_dict) 
     
     def save(self, path):
+        print("Saving cnet to: ", path)
         torch.save(self.cnet.state_dict(), path)
     
     def eval(self,):
