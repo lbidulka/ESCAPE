@@ -32,10 +32,17 @@ from uncertnet.cnet_all import adapt_net
 
 def get_config():
     config = SimpleNamespace()
-    #
     config.root = 'uncertnet_poserefiner/backbones/HybrIK/'
     os.chdir(config.root)
+    config.device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     #
+
+    # Tasks
+    config.tasks = ['train', 'test'] # 'make_trainset' 'train', 'test'
+    # config.tasks = ['test']
+
+    # Main Settings
+    config.use_FF = True
 
     # HybrIK config
     config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
@@ -58,7 +65,15 @@ def get_config():
     config.cnet_ckpt_path = '../../ckpts/hybrIK/'
     config.cnet_dataset_path = '/media/ExtHDD01/luke_data/3DPW/' #'../../data/hybrIK/'
 
+    print_useful_configs(config)
     return config
+
+def print_useful_configs(config):
+    print('\n -- Config: --')
+    print('Tasks: {}'.format(config.tasks))
+    print('Use FF: {}'.format(config.use_FF))
+    print('hybrIK_version: {}'.format(config.hybrIK_version))    
+    return
 
 config = get_config()
 parser = argparse.ArgumentParser(description='HybrIK Demo')
@@ -110,28 +125,28 @@ cfg = update_config(config.cfg)
 
 def create_cnet_dataset(m, opt, cfg, gt_dataset, task='train'):
     # Data/Setup
-    gt_loader=torch.utils.data.DataLoader(gt_dataset, batch_size=128, shuffle=False, num_workers=8, drop_last=False)
+    gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=128, shuffle=False, num_workers=8, drop_last=False)
     m.eval()
-    m = m.to('cuda')
+    m = m.to(config.device)
 
     hm_shape = cfg.MODEL.get('HEATMAP_SIZE')
     hm_shape = (hm_shape[1], hm_shape[0])
 
     backbone_preds = []
     target_xyz_17s = []
-    for(inps, labels, img_ids, bboxes) in tqdm(gt_loader):
+    for(inps, labels, img_ids, bboxes) in tqdm(gt_loader, dynamic_ncols=True):
         if isinstance(inps, list):
             inps = [inp.cuda(opt.gpu) for inp in inps]
         else:
-            inps=inps.to('cuda')
+            inps=inps.to(config.device)
 
         for k, _ in labels.items():
             try:
-                labels[k] = labels[k].to('cuda')
+                labels[k] = labels[k].to(config.device)
             except AttributeError:
                 assert k == 'type'
 
-        m_output = m(inps, flip_test=opt.flip_test, bboxes=bboxes.to('cuda'), img_center=labels['img_center'])
+        m_output = m(inps, flip_test=opt.flip_test, bboxes=bboxes.to(config.device), img_center=labels['img_center'])
         backbone_pred = m_output.pred_xyz_jts_17
 
         backbone_preds.append(backbone_pred.detach().cpu().numpy())
@@ -165,22 +180,28 @@ def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=F
             inps = [inp.cuda(opt.gpu) for inp in inps]
         else:
             # inps = inps.cuda(opt.gpu)
-            inps=inps.to('cuda')
+            inps=inps.to(config.device)
 
         for k, _ in labels.items():
             try:
-                labels[k] = labels[k].to('cuda')
+                labels[k] = labels[k].to(config.device)
             except AttributeError:
                 assert k == 'type'
         
         # HybrIK pred, then correct with cnet
-        output = m(inps, flip_test=opt.flip_test, bboxes=bboxes.to('cuda'), img_center=labels['img_center'])
+        output = m(inps, flip_test=opt.flip_test, bboxes=bboxes.to(config.device), img_center=labels['img_center'])
         
         if test_cnet:
             backbone_pred = output.pred_xyz_jts_17
             backbone_pred = backbone_pred.reshape(inps.shape[0], -1, 3)
+            poses_2d = labels['target_xyz_17'].reshape(inps.shape[0], -1, 3)[:,:,:2]    # TEMP: using labels for 2D
             
-            corrected_pred = cnet(backbone_pred)
+            if config.use_FF:
+                cnet_in = (poses_2d, backbone_pred)
+            else:
+                cnet_in = backbone_pred
+
+            corrected_pred = cnet(cnet_in)
 
             output.pred_xyz_jts_17 = corrected_pred.reshape(inps.shape[0], -1)
 
@@ -268,11 +289,11 @@ def main_worker(opt, cfg, model=None):
 
     print(' USING HYBRIK VER: {}'.format(config.hybrIK_version))
 
-    # print('##### Creating CNET 3DPW Dataset #####')
     with torch.no_grad():
-        pass
-        # create_cnet_dataset(m, opt, cfg, gt_train_dataset_3dpw, task='train')
-        # create_cnet_dataset(m, opt, cfg, gt_test_dataset_3dpw, task='test')
+        if 'make_trainset' in config.tasks:
+            print('##### Creating CNET 3DPW Trainset #####')
+            create_cnet_dataset(m, opt, cfg, gt_train_dataset_3dpw, task='train')
+        # # create_cnet_dataset(m, opt, cfg, gt_test_dataset_3dpw, task='test')
     m = m.to('cpu')
 
     config.train_datalim = None
@@ -282,24 +303,25 @@ def main_worker(opt, cfg, model=None):
     # cnet = uncertnet_models.all_limb_cnet(config) 
     cnet = adapt_net(config)
 
-    cnet.train()
+    if 'train' in config.tasks:
+        cnet.train()
     cnet.load_cnets()
 
-    m = m.to('cuda')
+    m = m.to(config.device)
 
     # --- TEST SET EVAL ---
-    print('\n##### 3DPW TESTSET ERRS #####\n')
-    with torch.no_grad():
-        gt_tot_err = eval_gt(m, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True)
+    if 'test' in config.tasks:
+        print('\n##### 3DPW TESTSET ERRS #####\n')
+        with torch.no_grad():
+            tot_corr_PA_MPJPE = eval_gt(m, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True)
 
-    print('\n--- Vanilla: --- ')
-    # with torch.no_grad():
-    #     gt_tot_err = eval_gt(m, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False)
-    if config.hybrIK_version == 'res34_cam':
-        print('XYZ_14 PA-MPJPE: 45.917672 | MPJPE: 74.113751, x: 27.145215, y: 28.64, z: 51.785723')  # w/ 3DPW
-    if config.hybrIK_version == 'hrw48_wo_3dpw':
-        print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
-    
+        print('\n--- Vanilla: --- ')
+        # with torch.no_grad():
+        #     gt_tot_err = eval_gt(m, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False)
+        if config.hybrIK_version == 'res34_cam':
+            print('XYZ_14 PA-MPJPE: 45.917672 | MPJPE: 74.113751, x: 27.145215, y: 28.64, z: 51.785723')  # w/ 3DPW
+        if config.hybrIK_version == 'hrw48_wo_3dpw':
+            print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
 
 def load_pretrained_hybrik(ckpt=config.ckpt):
     hybrik_model = builder.build_sppe(cfg.MODEL)
