@@ -1,5 +1,25 @@
 import torch
 
+def mpjpe(predicted, target):
+    """
+    Mean per-joint position error (i.e. mean Euclidean distance),
+    often referred to as "Protocol #1" in many papers.
+    """
+    assert predicted.shape == target.shape
+    return torch.mean(torch.norm(predicted - target, dim=len(target.shape)-1))
+
+def n_mpjpe(predicted, target):
+    """
+    Normalized MPJPE (scale only), adapted from:
+    https://github.com/hrhodin/UnsupervisedGeometryAwareRepresentationLearning/blob/master/losses/poses.py
+    """
+    assert predicted.shape == target.shape
+    
+    norm_predicted = torch.mean(torch.sum(predicted**2, dim=-1, keepdim=True), dim=-2, keepdim=True)
+    norm_target = torch.mean(torch.sum(target*predicted, dim=-1, keepdim=True), dim=-2, keepdim=True)
+    scale = norm_target / (norm_predicted+0.0001)
+    return mpjpe(scale * predicted, target)
+
 def loss_weighted_rep_no_scale(p2d_in, p3d_in, confs=None, num_joints=17, scale=10):
     '''
     Reprojection loss, considering 2D backbone confidences
