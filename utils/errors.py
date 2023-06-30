@@ -20,7 +20,8 @@ def n_mpjpe(predicted, target):
     scale = norm_target / (norm_predicted+0.0001)
     return mpjpe(scale * predicted, target)
 
-def loss_weighted_rep_no_scale(p2d_in, p3d_in, confs=None, num_joints=17, scale=10):
+def loss_weighted_rep_no_scale(p2d_in, p3d_in, confs=None, sum_kpts=False,
+                               num_joints=17, scale=10):
     '''
     Reprojection loss, considering 2D backbone confidences
 
@@ -48,6 +49,7 @@ def loss_weighted_rep_no_scale(p2d_in, p3d_in, confs=None, num_joints=17, scale=
     scale_p3d = torch.sqrt(p3d[:, 0:num_joints*2].square().sum(axis=1, keepdim=True) / num_joints*2)
     p3d_scaled = p3d[:, 0:num_joints*2]/scale_p3d
 
-    loss = (scale * (p2d_scaled - p3d_scaled).abs().reshape(-1, 2, num_joints).sum(axis=1) * confs).sum(axis=1, keepdims=True) / (p2d_scaled.shape[0] * p2d_scaled.shape[1])
-
+    loss = (scale * (p2d_scaled - p3d_scaled).abs().reshape(-1, 2, num_joints).sum(axis=1) * confs) / (p2d_scaled.shape[0] * p2d_scaled.shape[1])
+    if sum_kpts:
+        loss = loss.sum(axis=1)
     return loss

@@ -11,8 +11,6 @@ from types import SimpleNamespace
 from uncertnet.distal_cnet import distal_err_net, distal_cnet
 from utils import errors
 
-torch.backends.cudnn.benchmark = True
-
 class Linear(nn.Module):
     def __init__(self, linear_size, p_dropout):
         """
@@ -24,6 +22,7 @@ class Linear(nn.Module):
         super(Linear, self).__init__()
 
         self.relu = nn.ReLU(inplace=True)
+        self.l_relu = nn.LeakyReLU(inplace=True)
         self.dropout = nn.Dropout(p_dropout)
 
         self.w1 = nn.Linear(linear_size, linear_size)
@@ -43,19 +42,22 @@ class Linear(nn.Module):
         """
         h = self.w1(x)
         h = self.bn1(h)
-        h = self.relu(h)
+        # h = self.relu(h)
+        h = self.l_relu(h)
         h = self.dropout(h)
 
         h = self.w2(h)
         h = self.bn2(h)
-        h = self.relu(h)
+        # h = self.relu(h)
+        h = self.l_relu(h)
         h = self.dropout(h)
 
         y = x + h
         return y
 
 class BaselineModel(nn.Module):
-    def __init__(self, linear_size=1024, num_stages=2, p_dropout=0.5, use_FF=False):
+    def __init__(self, linear_size=1024, num_stages=2, p_dropout=0.5, 
+                 use_FF=False, num_p_stages=2, p_linear_size=1024):
         """
 
         Args:
@@ -65,12 +67,42 @@ class BaselineModel(nn.Module):
             predict_14 (bool, optional): Whether to predict 14 3d-joints. Defaults to False.
         """
         super(BaselineModel, self).__init__()
+        self.use_FF = use_FF
+        self.num_p_stages = num_p_stages
 
         input_size = 17 * 3          # Input 3d-joints.
-        if use_FF: input_size += 1   # Fitness Feedback?
+        if use_FF: # Fitness Feedback?
+            FF_size = 17 #1
+            input_size += FF_size
         output_size = 4 * 3          # Output distal joint errs
 
-        self.w1 = nn.Linear(input_size, linear_size)
+        if use_FF:
+            embed_size = 128
+            # FF 
+            # embedding
+            self.w_FF_embd = nn.Linear(FF_size, embed_size)
+            self.bn_FF_embd = nn.BatchNorm1d(embed_size)
+            # linear blocks
+            self.w1_FF = nn.Linear(embed_size, p_linear_size)
+            self.bn1_FF = nn.BatchNorm1d(p_linear_size)
+            # if num_p_stages != 0:
+            #     self.linear_FF_stages = [Linear(p_linear_size, p_dropout) for _ in range(num_p_stages)]
+            #     self.linear_FF_stages = nn.ModuleList(self.linear_FF_stages)
+            # Input 
+            # embedding
+            self.w_in_embd = nn.Linear(input_size-FF_size, embed_size)
+            self.bn_in_embd = nn.BatchNorm1d(embed_size)
+            # linear blocks
+            self.w1_in = nn.Linear(embed_size, p_linear_size)
+            self.bn1_in = nn.BatchNorm1d(p_linear_size)
+            # if num_p_stages != 0:
+            #     self.linear_in_stages = [Linear(p_linear_size, p_dropout) for _ in range(num_p_stages)]
+            #     self.linear_in_stages = nn.ModuleList(self.linear_in_stages)
+
+            # self.w1 = nn.Linear(embed_size*2, linear_size)
+            self.w1 = nn.Linear(p_linear_size*2, linear_size)
+        else:
+            self.w1 = nn.Linear(input_size, linear_size)
         self.bn1 = nn.BatchNorm1d(linear_size)
 
         self.linear_stages = [Linear(linear_size, p_dropout) for _ in range(num_stages)]
@@ -79,6 +111,7 @@ class BaselineModel(nn.Module):
         self.w2 = nn.Linear(linear_size, output_size)
 
         self.relu = nn.ReLU(inplace=True)
+        self.l_relu = nn.LeakyReLU(inplace=True)
         self.dropout = nn.Dropout(p_dropout)
 
     def forward(self, x):
@@ -90,9 +123,33 @@ class BaselineModel(nn.Module):
         Returns:
             y (torch.Tensor): Output tensor.
         """
+        if self.use_FF:
+            # pose and FF streams
+            FF = x[:, :17]
+            FF = self.bn_FF_embd(self.w_FF_embd(FF))
+            FF = self.w1_FF(FF)
+            FF = self.bn1_FF(FF)
+            FF = self.relu(FF)
+            # if self.num_p_stages != 0:
+            #     for linear in self.linear_FF_stages:
+            #         FF = linear(FF)            
+
+            x = x[:, 17:]
+            x = self.bn_in_embd(self.w_in_embd(x))
+            x = self.w1_in(x)
+            x = self.bn1_in(x)
+            x = self.relu(x)
+            # if self.num_p_stages != 0:
+            #     for linear in self.linear_in_stages:
+            #         x = linear(x)            
+
+            # Concatenate embedded inputs
+            x = torch.cat([x, FF], dim=1)
+
         y = self.w1(x)
         y = self.bn1(y)
-        y = self.relu(y)
+        # y = self.relu(y)
+        y = self.l_relu(y)
         y = self.dropout(y)
 
         # linear blocks
@@ -102,27 +159,6 @@ class BaselineModel(nn.Module):
         y = self.w2(y)
 
         return y
-    
-class dumb_mlp(nn.Module):
-    '''
-    debug simple mlp
-    '''
-    def __init__(self):
-        super().__init__()
-        input_size = 17 * 3  # Input 3d-joints.
-        output_size = 4 * 3  # Output distal joint errs
-
-        self.fc1 = nn.Linear(input_size, output_size)
-
-        self.relu = nn.ReLU(inplace=True)
-        # self.fc1 = nn.Linear(input_size, 32)
-        # self.out = nn.Linear(32, output_size)
-
-    def forward(self, x):
-        x = self.relu(self.fc1(x))
-        x = self.out(x)
-        return x
-    
 
 class adapt_net():
     '''
@@ -140,18 +176,18 @@ class adapt_net():
                                                                  config.hybrIK_version,)
 
         # Nets
-        self.cnet = BaselineModel(linear_size=128, num_stages=2, use_FF=config.use_FF).to(self.device)
-        # self.cnet = dumb_mlp().to(self.device)
-        # self.cnet = torch.ones(1, 1).to(self.device)
+        self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,
+                                  use_FF=config.use_FF, num_p_stages=1, p_linear_size=512,
+                                  ).to(self.device)
         
         # Training
         self.config.train_split = 0.85
         self.config.err_scale = 1000    # 100
 
-        self.config.lr = 3e-4           # 1e-2
-        self.config.weight_decay = 1e-5
+        self.config.lr = 1e-4           # 1e-2, 3e-4
+        self.config.weight_decay = 1e-3
         self.config.batch_size = 1024
-        self.config.cnet_train_epochs = 60
+        self.config.cnet_train_epochs = 40
         self.config.ep_print_freq = 5
 
         self.optimizer = torch.optim.Adam(self.cnet.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
@@ -166,7 +202,7 @@ class adapt_net():
         '''
         Correct the backbone predictions, no Feedback
         '''
-        corr_pred = copy.deepcopy(backbone_pred)
+        corr_pred = backbone_pred.detach().clone()
         inp = torch.flatten(backbone_pred, start_dim=1)
         pred_errs = self.cnet(inp) / self.config.err_scale
         pred_errs = pred_errs.reshape(-1, 4, 3) # net output is 4x3 (4 distal joints, 3d) errors
@@ -180,7 +216,7 @@ class adapt_net():
         '''
         poses_2d, backbone_pred = input
 
-        corr_pred = copy.deepcopy(backbone_pred)
+        corr_pred = backbone_pred.detach().clone()
         FF_errs = errors.loss_weighted_rep_no_scale(poses_2d, backbone_pred)
         inp = torch.cat([FF_errs, torch.flatten(backbone_pred, start_dim=1)], 1)
         pred_errs = self.cnet(inp) / self.config.err_scale
@@ -213,10 +249,10 @@ class adapt_net():
 
         gt_trainset = torch.utils.data.TensorDataset(data_train)
         gt_trainloader = torch.utils.data.DataLoader(gt_trainset, batch_size=self.config.batch_size, shuffle=True, 
-                                                     num_workers=16, drop_last=False)#, pin_memory=True)
+                                                     num_workers=16, drop_last=False, pin_memory=True)
         gt_valset = torch.utils.data.TensorDataset(data_val)
         gt_valloader = torch.utils.data.DataLoader(gt_valset, batch_size=self.config.batch_size, shuffle=True, 
-                                                   num_workers=16, drop_last=False)#, pin_memory=True)
+                                                   num_workers=16, drop_last=False, pin_memory=True)
 
         # Train
         eps = self.config.cnet_train_epochs
@@ -289,12 +325,12 @@ class adapt_net():
         print("|| Best val loss: {:.5f} at ep: {} ||".format(best_val_loss, best_val_ep))
         return
 
-    def load_cnets(self,):
+    def load_cnets(self, print_str=True):
         '''
         Load the best validation checkpoints
         '''
         load_path = self.config.cnet_ckpt_path + self.config.ckpt_name
-        print("\nLoading cnet from: ", load_path)
+        if print_str: print("\nLoading cnet from: ", load_path)
         all_net_ckpt_dict = torch.load(load_path)
         self.cnet.load_state_dict(all_net_ckpt_dict) 
     
