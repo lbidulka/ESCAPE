@@ -172,8 +172,10 @@ class adapt_net():
         self.config.ckpt_name = self.config.hybrIK_version + '_cnet_all.pth'
         if config.use_FF:
             self.config.ckpt_name = self.config.ckpt_name[:-4] + '_FF' + self.config.ckpt_name[-4:]
-        self.config.data_path = '{}{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, 
-                                                                 config.hybrIK_version,)
+        # self.config.data_train_path = '{}{}/{}_cnet_hybrik_train.npy'.format(
+        #                                                         config.cnet_dataset_path, 
+        #                                                         config.trainset,
+        #                                                         config.hybrIK_version,)
 
         # Nets
         self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,
@@ -235,17 +237,17 @@ class adapt_net():
     def train(self,):
         # data_path = self.config.cnet_dataset_path + 'cnet_hybrik_train.npy'
         if self.config.train_datalim is not None:
-            data_all = torch.from_numpy(np.load(self.config.data_path)).float()[:, :self.config.train_datalim]
+            data_all = torch.from_numpy(np.load(self.config.cnet_trainset_path)).float()[:, :self.config.train_datalim]
         else:
-            data_all = torch.from_numpy(np.load(self.config.data_path)).float()
+            data_all = torch.from_numpy(np.load(self.config.cnet_trainset_path)).float()
 
         len_train = int(len(data_all[0]) * self.config.train_split)
         data_train, data_val = data_all[:, :len_train, :], data_all[:, len_train:, :]
 
         data_train = data_train.permute(1,0,2)
         data_val = data_val.permute(1,0,2)
-        data_train = data_train.reshape(data_train.shape[0], 2, -1, 3) # batch, 2, kpts, xyz)
-        data_val = data_val.reshape(data_val.shape[0], 2, -1, 3)
+        data_train = data_train.reshape(data_train.shape[0], 3, -1, 3) # batch, 2, kpts, xyz)
+        data_val = data_val.reshape(data_val.shape[0], 3, -1, 3)
 
         gt_trainset = torch.utils.data.TensorDataset(data_train)
         gt_trainloader = torch.utils.data.DataLoader(gt_trainset, batch_size=self.config.batch_size, shuffle=True, 

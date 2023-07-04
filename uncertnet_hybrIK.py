@@ -36,17 +36,6 @@ def get_config():
     config = SimpleNamespace()
     config.root = 'uncertnet_poserefiner/backbones/HybrIK/'
     os.chdir(config.root)
-    
-    # CUDA
-    config.device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
-    torch.backends.cudnn.enabled = True
-    torch.backends.cudnn.allow_tf32 = True
-    torch.backends.cudnn.benchmark = True
-
-    # Tasks
-    config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
-    # config.tasks = ['make_testset', 'test']
-    # config.tasks = ['test']
 
     # Main Settings
     config.use_FF = False
@@ -56,6 +45,19 @@ def get_config():
     config.test_adapt_lr = 1e-3
     config.adapt_steps = 1
 
+    config.train_datalim = None # None
+
+    # Tasks
+    config.tasks = ['make_trainset', 'make_testset', 'train', 'test']
+    # config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
+    # config.tasks = ['make_testset', 'test']
+    # config.tasks = ['make_trainset']
+    # config.tasks = ['test']
+
+    # Data
+    config.trainset = 'PW3D' # 'HP3D', 'PW3D',
+    config.testset = 'PW3D' # 'HP3D', 'PW3D',
+
     # HybrIK config
     config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
 
@@ -64,90 +66,47 @@ def get_config():
         config.ckpt = 'pretrained_w_cam.pth'
     if config.hybrIK_version == 'hrw48_wo_3dpw':
         config.cfg = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_wo_pw3d.yaml'    # w/o 3DPW
-        config.ckpt = 'hybrik_hrnet48_wo3dpw.pth'    
-
-    
-    # Data
-    config.trainset = '3DPW'
-    config.testset = '3DPW'
-    
-    # AMASS data
-    # data_3d_AMASS=np.load('/media/ExtHDD/Mohsen_data/AMASS/processed_AMASS.npz')
-    # config.data_amass_dir = '/media/ExtHDD/Mohsen_data/AMASS'
-    
-
-    # 3DPW data
-    config.data_3DPW_dir = '/media/ExtHDD/Mohsen_data/3DPW'
-    config.data_3DPW_test_annot = '{}/json/3DPW_test_new.json'.format(config.data_3DPW_dir)
-    # config.data_3DPW_test_annot = '{}/3DPW_latest_test.json'.format(config.data_3DPW_dir)
-    config.data_3DPW_train_annot = '{}/3DPW_latest_train.json'.format(config.data_3DPW_dir)
-    config.data_3DPW_img_dir = '{}/imageFiles'.format(config.data_3DPW_dir)
+        config.ckpt = 'hybrik_hrnet48_wo3dpw.pth' 
 
     # cnet dataset
     config.cnet_ckpt_path = '../../ckpts/hybrIK/'
     config.cnet_dataset_path = '/media/ExtHDD/luke_data/adapt_3d/' #3DPW
 
+    config.cnet_trainset_path = '{}{}/{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, 
+                                                                config.trainset,
+                                                                config.hybrIK_version,)
+    config.cnet_testset_path = '{}{}/{}_cnet_hybrik_test.npy'.format(config.cnet_dataset_path, 
+                                                                config.testset,
+                                                                config.hybrIK_version,)
+    
+    # CUDA
+    config.device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    torch.backends.cudnn.enabled = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
     print_useful_configs(config)
     return config
 
 def print_useful_configs(config):
-    print('\n --- Config: ---')
+    print('\n ----- CONFIG: -----')
+    print(' -------------------')
     print('hybrIK_version: {}'.format(config.hybrIK_version))
     print('Tasks: {}'.format(config.tasks))
+    print(' --- CNet: ---')
     print('Use FF: {}'.format(config.use_FF))
     print('Corr Steps: {}'.format(config.corr_steps))
     print('Test Adapt: {}'.format(config.test_adapt))
     print('Test Adapt LR: {}'.format(config.test_adapt_lr))
-    print('Adapt Steps: {}'.format(config.adapt_steps))
-    print(' ----------------- \n')  
+    print('Adapt Steps: {}'.format(config.adapt_steps)) 
+    print(' --- Data: ---')
+    print('Trainset: {}'.format(config.trainset))
+    print('Testset: {}'.format(config.testset))
+    print('Trainset path: {}'.format(config.cnet_trainset_path))
+    print('Testset path: {}'.format(config.cnet_testset_path))
+    print(' ----------------- \n') 
     return
 
 config = get_config()
-parser = argparse.ArgumentParser(description='HybrIK Demo')
-
-parser.add_argument('--gpu',
-                    help='gpu',
-                    default=0,
-                    type=int)
-parser.add_argument('--img-dir',
-                    help='image folder',
-                    default=config.data_3DPW_img_dir,
-                    type=str)
-parser.add_argument('--annot-dir',
-                    help='image folder',
-                    default=config.data_3DPW_train_annot,
-                    type=str)
-parser.add_argument('--out-dir',
-                    help='output folder',
-                    default='',
-                    type=str)
-
-parser.add_argument('--cfg',
-                    help='experiment configure file name',
-                    required=False,
-                    type=str)
-parser.add_argument('--checkpoint',
-                    help='checkpoint file name',
-                    required=False,
-                    type=str)
-parser.add_argument('--gpus',
-                    help='gpus',
-                    type=str)
-parser.add_argument('--batch',
-                    help='validation batch size',
-                    type=int)
-parser.add_argument('--flip-test',
-                    default=False,
-                    dest='flip_test',
-                    help='flip test',
-                    action='store_true')
-parser.add_argument('--flip-shift',
-                    default=False,
-                    dest='flip_shift',
-                    help='flip shift',
-                    action='store_true')
-
-opt = parser.parse_args()
 cfg = update_config(config.cfg)
 
 def load_pretrained_hybrik(ckpt=config.ckpt):
@@ -163,11 +122,15 @@ def load_pretrained_hybrik(ckpt=config.ckpt):
 
     return hybrik_model
 
-def create_cnet_dataset(m, opt, cfg, gt_dataset, task='train'):
+def create_cnet_dataset(m, cfg, gt_dataset, task='train'):
     # Data/Setup
     gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=64, shuffle=False, num_workers=8, drop_last=False)
     m.eval()
     m = m.to(config.device)
+
+    opt = SimpleNamespace()
+    opt.device = config.device
+    opt.flip_test = True
 
     hm_shape = cfg.MODEL.get('HEATMAP_SIZE')
     hm_shape = (hm_shape[1], hm_shape[0])
@@ -175,7 +138,10 @@ def create_cnet_dataset(m, opt, cfg, gt_dataset, task='train'):
     backbone_preds = []
     target_xyz_17s = []
     img_idss = []
-    for(inps, labels, img_ids, bboxes) in tqdm(gt_loader, dynamic_ncols=True):
+    for data in tqdm(gt_loader, dynamic_ncols=True):
+        
+        (inps, labels, img_ids, bboxes) = data
+
         if isinstance(inps, list):
             inps = [inp.cuda(opt.gpu) for inp in inps]
         else:
@@ -192,16 +158,20 @@ def create_cnet_dataset(m, opt, cfg, gt_dataset, task='train'):
 
         backbone_preds.append(backbone_pred.detach().cpu().numpy())
         target_xyz_17s.append(labels['target_xyz_17'].detach().cpu().numpy())
-        if task == 'test':
-            img_idss.append(img_ids.detach().cpu().numpy())
+        # if task == 'test':
+        img_idss.append(img_ids.detach().cpu().numpy())
 
-    dataset_outpath = '{}{}_cnet_hybrik_{}.npy'.format(config.cnet_dataset_path, config.hybrIK_version, task)
+    # dataset_outpath = '{}{}_cnet_hybrik_{}.npy'.format(config.cnet_dataset_path, config.hybrIK_version, task)
+    if task == 'train':
+        dataset_outpath = config.cnet_trainset_path
+    elif task == 'test':
+        dataset_outpath = config.cnet_testset_path
     np.save(dataset_outpath, np.array([np.concatenate(backbone_preds, axis=0), 
                                        np.concatenate(target_xyz_17s, axis=0),
                                        np.repeat(np.concatenate(img_idss, axis=0).reshape(-1,1), backbone_pred.shape[1], axis=1)]))
     return
 
-def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=False, test_cnet=False, use_data_file=False):
+def eval_gt(m, cnet, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=False, test_cnet=False, use_data_file=False):
     if config.test_adapt:
         batch_size = 1
     else:
@@ -209,7 +179,7 @@ def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=F
     gt_eval_dataset_for_scoring = gt_eval_dataset
     # Data/Setup
     if use_data_file:
-        test_file = '{}{}_cnet_hybrik_test.npy'.format(config.cnet_dataset_path, config.hybrIK_version,)
+        test_file = config.cnet_testset_path
         test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
         gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
     gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False, 
@@ -225,6 +195,10 @@ def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=F
 
     errs = []
     errs_s = []
+
+    opt = SimpleNamespace()
+    opt.device = config.device
+    opt.flip_test = True
 
     def set_bn_eval(module):
         ''' Batch Norm layer freezing '''
@@ -300,23 +274,23 @@ def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=F
     tot_err_17 = gt_eval_dataset_for_scoring.evaluate_xyz_17(kpt_all_pred, os.path.join('exp', 'test_3d_kpt.json'))
     return tot_err_17
 
-def make_trainset(hybrik, opt, cfg, gt_train_dataset_3dpw):
+def make_trainset(hybrik, cfg, gt_train_dataset_3dpw):
     with torch.no_grad():
         print('##### Creating CNET 3DPW Trainset #####')
-        create_cnet_dataset(hybrik, opt, cfg, gt_train_dataset_3dpw, task='train')
+        create_cnet_dataset(hybrik, cfg, gt_train_dataset_3dpw, task='train')
 
-def make_testset(hybrik, opt, cfg, gt_test_dataset_3dpw):
+def make_testset(hybrik, cfg, gt_test_dataset_3dpw):
     with torch.no_grad():
         print('##### Creating CNET 3DPW Testset #####')
-        create_cnet_dataset(hybrik, opt, cfg, gt_test_dataset_3dpw, task='test')
+        create_cnet_dataset(hybrik, cfg, gt_test_dataset_3dpw, task='test')
 
-def test(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw):
+def test(hybrik, cnet, cfg, gt_test_dataset_3dpw):
     cnet.load_cnets()
     hybrik = hybrik.to(config.device)
     heatmap_to_coord = get_func_heatmap_to_coord(cfg) 
 
     print('\n##### 3DPW TESTSET ERRS #####\n')
-    tot_corr_PA_MPJPE = eval_gt(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True, use_data_file=True)
+    tot_corr_PA_MPJPE = eval_gt(hybrik, cnet, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True, use_data_file=True)
     print('\n--- Vanilla: --- ')
     # with torch.no_grad():
     #     gt_tot_err = eval_gt(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False)
@@ -325,37 +299,50 @@ def test(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw):
     if config.hybrIK_version == 'hrw48_wo_3dpw':
         print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
 
-def main_worker(opt, cfg, hybrIK_model): 
+def get_dataset(cfg):
+    # Datasets for HybrIK
+    if config.trainset == 'PW3D':
+        trainset = PW3D(
+            cfg=cfg,
+            ann_file='3DPW_train_new_fresh.json',
+            train=False,
+            root='/media/ExtHDD/Mohsen_data/3DPW')
+    elif config.trainset == 'HP3D':
+        trainset = HP3D(
+            cfg=cfg,
+            ann_file='annotation_mpi_inf_3dhp_train_v2.json',
+            train=False,
+            root='/media/ExtHDD/luke_data/3DHP')
+        
+    if config.testset == 'PW3D':
+        testset = PW3D(
+            cfg=cfg,
+            ann_file='3DPW_test_new_fresh.json',
+            train=False,
+            root='/media/ExtHDD/Mohsen_data/3DPW')
+    if config.testset == 'HP3D':
+        raise NotImplementedError    
+    
+    return trainset, testset
+
+def main_worker(cfg, hybrIK_model): 
     print(' USING HYBRIK VER: {}'.format(config.hybrIK_version))
     
     hybrik = hybrIK_model.to('cpu')
-    config.train_datalim = None
-    # config.train_datalim = 100
     cnet = adapt_net(config)
 
-    # Datasets for HybrIK
-    gt_train_dataset_3dpw = PW3D(
-        cfg=cfg,
-        ann_file='3DPW_train_new_fresh.json',
-        train=False,
-        root='/media/ExtHDD/Mohsen_data/3DPW')
-    gt_test_dataset_3dpw = PW3D(
-        cfg=cfg,
-        # ann_file='3DPW_test_new.json',
-        ann_file='3DPW_test_new_fresh.json',
-        train=False,
-        root='/media/ExtHDD/Mohsen_data/3DPW')
+    hybrik_trainset, hybrik_testset = get_dataset(cfg)
 
     if 'make_trainset' in config.tasks:
-        make_trainset(hybrik, opt, cfg, gt_train_dataset_3dpw)
+        make_trainset(hybrik, cfg, hybrik_trainset)
     if 'make_testset' in config.tasks: 
-        make_testset(hybrik, opt, cfg, gt_test_dataset_3dpw)    
+        make_testset(hybrik, cfg, hybrik_testset)    
     if 'train' in config.tasks:
         cnet.train()
     if 'test' in config.tasks:
-        test(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw)
+        test(hybrik, cnet, cfg, hybrik_testset)
 
 if __name__ == "__main__":    
     hybrik = load_pretrained_hybrik()
-    main_worker(opt, cfg, hybrIK_model=hybrik)
+    main_worker(cfg, hybrIK_model=hybrik)
 
