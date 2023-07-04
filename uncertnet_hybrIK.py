@@ -43,7 +43,6 @@ def get_config():
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
 
-
     # Tasks
     config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
     # config.tasks = ['make_testset', 'test']
@@ -58,7 +57,7 @@ def get_config():
     config.adapt_steps = 1
 
     # HybrIK config
-    config.hybrIK_version = 'res34_cam' # 'res34_cam', 'hrw48_wo_3dpw'
+    config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
 
     if config.hybrIK_version == 'res34_cam':
         config.cfg = 'configs/256x192_adam_lr1e-3-res34_smpl_3d_cam_2x_mix.yaml'
@@ -66,6 +65,16 @@ def get_config():
     if config.hybrIK_version == 'hrw48_wo_3dpw':
         config.cfg = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_wo_pw3d.yaml'    # w/o 3DPW
         config.ckpt = 'hybrik_hrnet48_wo3dpw.pth'    
+
+    
+    # Data
+    config.trainset = '3DPW'
+    config.testset = '3DPW'
+    
+    # AMASS data
+    # data_3d_AMASS=np.load('/media/ExtHDD/Mohsen_data/AMASS/processed_AMASS.npz')
+    # config.data_amass_dir = '/media/ExtHDD/Mohsen_data/AMASS'
+    
 
     # 3DPW data
     config.data_3DPW_dir = '/media/ExtHDD/Mohsen_data/3DPW'
@@ -76,7 +85,7 @@ def get_config():
 
     # cnet dataset
     config.cnet_ckpt_path = '../../ckpts/hybrIK/'
-    config.cnet_dataset_path = '/media/ExtHDD/luke_data/3DPW/' 
+    config.cnet_dataset_path = '/media/ExtHDD/luke_data/adapt_3d/' #3DPW
 
     print_useful_configs(config)
     return config
@@ -140,6 +149,19 @@ parser.add_argument('--flip-shift',
 
 opt = parser.parse_args()
 cfg = update_config(config.cfg)
+
+def load_pretrained_hybrik(ckpt=config.ckpt):
+    hybrik_model = builder.build_sppe(cfg.MODEL)
+    
+    print(f'\nLoading HybrIK model from {ckpt}...\n')
+    save_dict = torch.load(ckpt, map_location='cpu')
+    if type(save_dict) == dict:
+        model_dict = save_dict['model']
+        hybrik_model.load_state_dict(model_dict)
+    else:
+        hybrik_model.load_state_dict(save_dict, strict=False)
+
+    return hybrik_model
 
 def create_cnet_dataset(m, opt, cfg, gt_dataset, task='train'):
     # Data/Setup
@@ -278,29 +300,45 @@ def eval_gt(m, cnet, opt, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=F
     tot_err_17 = gt_eval_dataset_for_scoring.evaluate_xyz_17(kpt_all_pred, os.path.join('exp', 'test_3d_kpt.json'))
     return tot_err_17
 
-def main_worker(opt, cfg, model=None):
-    torch.backends.cudnn.benchmark = True
-    if model is None:
-        m = builder.build_sppe(cfg.MODEL)
+def make_trainset(hybrik, opt, cfg, gt_train_dataset_3dpw):
+    with torch.no_grad():
+        print('##### Creating CNET 3DPW Trainset #####')
+        create_cnet_dataset(hybrik, opt, cfg, gt_train_dataset_3dpw, task='train')
 
-        print(f'Loading HybrIK model from {opt.checkpoint}...')
-        save_dict = torch.load(opt.checkpoint)
-        if type(save_dict) == dict:
-            model_dict = save_dict['model']
-            m.load_state_dict(model_dict, strict=False)
-        else:
-            m.load_state_dict(save_dict, strict=False)
-    else:
-        m = model
-    heatmap_to_coord = get_func_heatmap_to_coord(cfg)   
+def make_testset(hybrik, opt, cfg, gt_test_dataset_3dpw):
+    with torch.no_grad():
+        print('##### Creating CNET 3DPW Testset #####')
+        create_cnet_dataset(hybrik, opt, cfg, gt_test_dataset_3dpw, task='test')
 
-    # Datasets
+def test(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw):
+    cnet.load_cnets()
+    hybrik = hybrik.to(config.device)
+    heatmap_to_coord = get_func_heatmap_to_coord(cfg) 
+
+    print('\n##### 3DPW TESTSET ERRS #####\n')
+    tot_corr_PA_MPJPE = eval_gt(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True, use_data_file=True)
+    print('\n--- Vanilla: --- ')
+    # with torch.no_grad():
+    #     gt_tot_err = eval_gt(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False)
+    if config.hybrIK_version == 'res34_cam':
+        print('XYZ_14 PA-MPJPE: 45.917672 | MPJPE: 74.113751, x: 27.145215, y: 28.64, z: 51.785723')  # w/ 3DPW
+    if config.hybrIK_version == 'hrw48_wo_3dpw':
+        print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
+
+def main_worker(opt, cfg, hybrIK_model): 
+    print(' USING HYBRIK VER: {}'.format(config.hybrIK_version))
+    
+    hybrik = hybrIK_model.to('cpu')
+    config.train_datalim = None
+    # config.train_datalim = 100
+    cnet = adapt_net(config)
+
+    # Datasets for HybrIK
     gt_train_dataset_3dpw = PW3D(
         cfg=cfg,
         ann_file='3DPW_train_new_fresh.json',
         train=False,
         root='/media/ExtHDD/Mohsen_data/3DPW')
-    
     gt_test_dataset_3dpw = PW3D(
         cfg=cfg,
         # ann_file='3DPW_test_new.json',
@@ -308,57 +346,16 @@ def main_worker(opt, cfg, model=None):
         train=False,
         root='/media/ExtHDD/Mohsen_data/3DPW')
 
-    print(' USING HYBRIK VER: {}'.format(config.hybrIK_version))
-
-    with torch.no_grad():
-        if 'make_trainset' in config.tasks:
-            print('##### Creating CNET 3DPW Trainset #####')
-            create_cnet_dataset(m, opt, cfg, gt_train_dataset_3dpw, task='train')
-        if 'make_testset' in config.tasks: 
-            print('##### Creating CNET 3DPW Testset #####')
-            create_cnet_dataset(m, opt, cfg, gt_test_dataset_3dpw, task='test')
-    m = m.to('cpu')
-
-    config.train_datalim = None
-    # config.train_datalim = 100
-
-    # cnet = uncertnet_models.multi_distal_cnet(config)
-    # cnet = uncertnet_models.all_limb_cnet(config) 
-    cnet = adapt_net(config)
-
+    if 'make_trainset' in config.tasks:
+        make_trainset(hybrik, opt, cfg, gt_train_dataset_3dpw)
+    if 'make_testset' in config.tasks: 
+        make_testset(hybrik, opt, cfg, gt_test_dataset_3dpw)    
     if 'train' in config.tasks:
         cnet.train()
-    cnet.load_cnets()
-
-    m = m.to(config.device)
-
-    # --- TEST SET EVAL ---
     if 'test' in config.tasks:
-        print('\n##### 3DPW TESTSET ERRS #####\n')
-        tot_corr_PA_MPJPE = eval_gt(m, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True, use_data_file=True)
-
-        print('\n--- Vanilla: --- ')
-        # with torch.no_grad():
-        #     gt_tot_err = eval_gt(m, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False)
-        if config.hybrIK_version == 'res34_cam':
-            print('XYZ_14 PA-MPJPE: 45.917672 | MPJPE: 74.113751, x: 27.145215, y: 28.64, z: 51.785723')  # w/ 3DPW
-        if config.hybrIK_version == 'hrw48_wo_3dpw':
-            print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
-
-def load_pretrained_hybrik(ckpt=config.ckpt):
-    hybrik_model = builder.build_sppe(cfg.MODEL)
-    
-    print(f'\nLoading HybrIK model from {ckpt}...\n')
-    save_dict = torch.load(ckpt, map_location='cpu')
-    if type(save_dict) == dict:
-        model_dict = save_dict['model']
-        hybrik_model.load_state_dict(model_dict)
-    else:
-        hybrik_model.load_state_dict(save_dict, strict=False)
-
-    return hybrik_model
+        test(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw)
 
 if __name__ == "__main__":    
-    model = load_pretrained_hybrik()
-    main_worker(opt, cfg, model=model)
+    hybrik = load_pretrained_hybrik()
+    main_worker(opt, cfg, hybrIK_model=hybrik)
 
