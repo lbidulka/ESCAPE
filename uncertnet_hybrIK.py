@@ -38,6 +38,7 @@ def get_config():
     os.chdir(config.root)
 
     # Main Settings
+    config.use_cnet = True
     config.use_FF = False
     config.corr_steps = 1
 
@@ -48,14 +49,15 @@ def get_config():
     config.train_datalim = None # None
 
     # Tasks
-    config.tasks = ['make_trainset', 'make_testset', 'train', 'test']
-    # config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
+    # config.tasks = ['make_trainset', 'make_testset', 'train', 'test']
+    config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
+    # config.tasks = ['make_trainset', 'train', 'test']
     # config.tasks = ['make_testset', 'test']
     # config.tasks = ['make_trainset']
-    # config.tasks = ['test']
+    config.tasks = ['test']
 
     # Data
-    config.trainset = 'PW3D' # 'HP3D', 'PW3D',
+    config.trainset = 'HP3D' # 'HP3D', 'PW3D',
     config.testset = 'PW3D' # 'HP3D', 'PW3D',
 
     # HybrIK config
@@ -93,6 +95,7 @@ def print_useful_configs(config):
     print('hybrIK_version: {}'.format(config.hybrIK_version))
     print('Tasks: {}'.format(config.tasks))
     print(' --- CNet: ---')
+    print('Use CNet: {}'.format(config.use_cnet))
     print('Use FF: {}'.format(config.use_FF))
     print('Corr Steps: {}'.format(config.corr_steps))
     print('Test Adapt: {}'.format(config.test_adapt))
@@ -124,7 +127,8 @@ def load_pretrained_hybrik(ckpt=config.ckpt):
 
 def create_cnet_dataset(m, cfg, gt_dataset, task='train'):
     # Data/Setup
-    gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=64, shuffle=False, num_workers=8, drop_last=False)
+    gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=64, shuffle=False, 
+                                            num_workers=16, drop_last=False, pin_memory=True)
     m.eval()
     m = m.to(config.device)
 
@@ -134,6 +138,11 @@ def create_cnet_dataset(m, cfg, gt_dataset, task='train'):
 
     hm_shape = cfg.MODEL.get('HEATMAP_SIZE')
     hm_shape = (hm_shape[1], hm_shape[0])
+
+    if isinstance(gt_dataset, HP3D):
+        target_key = 'target_xyz'
+    elif isinstance(gt_dataset, PW3D):
+        target_key = 'target_xyz_17'
 
     backbone_preds = []
     target_xyz_17s = []
@@ -157,9 +166,10 @@ def create_cnet_dataset(m, cfg, gt_dataset, task='train'):
         backbone_pred = m_output.pred_xyz_jts_17
 
         backbone_preds.append(backbone_pred.detach().cpu().numpy())
-        target_xyz_17s.append(labels['target_xyz_17'].detach().cpu().numpy())
-        # if task == 'test':
+        target_xyz_17s.append(labels[target_key].detach().cpu().numpy())
         img_idss.append(img_ids.detach().cpu().numpy())
+
+        break   # DEBUG
 
     # dataset_outpath = '{}{}_cnet_hybrik_{}.npy'.format(config.cnet_dataset_path, config.hybrIK_version, task)
     if task == 'train':
@@ -255,11 +265,14 @@ def eval_gt(m, cnet, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=False,
             else:
                 cnet_in = backbone_pred
 
-            with torch.no_grad():
-                for i in range(config.corr_steps):
-                    corrected_pred = cnet(cnet_in)
-                    cnet_in = corrected_pred
-            output.pred_xyz_jts_17 = corrected_pred.reshape(labels['target_xyz_17'].shape[0], -1)
+            if config.use_cnet:
+                with torch.no_grad():
+                    for i in range(config.corr_steps):
+                        corrected_pred = cnet(cnet_in)
+                        cnet_in = corrected_pred
+                output.pred_xyz_jts_17 = corrected_pred.reshape(labels['target_xyz_17'].shape[0], -1)
+            else:
+                output.pred_xyz_jts_17 = backbone_pred.reshape(labels['target_xyz_17'].shape[0], -1)
 
         pred_xyz_jts_17 = output.pred_xyz_jts_17.reshape(labels['target_xyz_17'].shape[0], 17, 3)
         pred_xyz_jts_17 = pred_xyz_jts_17.cpu().data.numpy()
@@ -307,12 +320,18 @@ def get_dataset(cfg):
             ann_file='3DPW_train_new_fresh.json',
             train=False,
             root='/media/ExtHDD/Mohsen_data/3DPW')
+    # elif config.trainset == 'HP3D':
+    #     trainset = HP3D(
+    #         cfg=cfg,
+    #         ann_file='annotation_mpi_inf_3dhp_train_v2.json',
+    #         train=False,
+    #         root='/media/ExtHDD/luke_data/3DHP')
     elif config.trainset == 'HP3D':
         trainset = HP3D(
             cfg=cfg,
-            ann_file='annotation_mpi_inf_3dhp_train_v2.json',
-            train=False,
-            root='/media/ExtHDD/luke_data/3DHP')
+            ann_file='train_v2',   # dumb adjustment...
+            train=True,
+            root='/media/ExtHDD/luke_data/HP3D')
         
     if config.testset == 'PW3D':
         testset = PW3D(

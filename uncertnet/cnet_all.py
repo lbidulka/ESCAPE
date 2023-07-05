@@ -186,8 +186,12 @@ class adapt_net():
         self.config.train_split = 0.85
         self.config.err_scale = 1000    # 100
 
-        self.config.lr = 1e-4           # 1e-2, 3e-4
-        self.config.weight_decay = 1e-3
+        if config.trainset == 'PW3D':
+            self.config.lr = 1e-4           # 1e-2, 3e-4
+            self.config.weight_decay = 1e-3
+        elif config.trainset == 'HP3D':
+            self.config.lr = 1e-3          
+            self.config.weight_decay = 1e-3
         self.config.batch_size = 1024
         self.config.cnet_train_epochs = 40
         self.config.ep_print_freq = 5

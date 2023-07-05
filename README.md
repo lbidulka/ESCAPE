@@ -13,3 +13,4 @@ wget http://visiondata.cis.upenn.edu/spin/dataset_extras.tar.gz && tar -xvf data
 - We only care about "mpi_inf_3dhp_train.npz" and "mpi_inf_3dhp_valid.npz" -->
 1. 3DHP 
 - Download the [HybrIK](https://github.com/Jeff-sjtu/HybrIK) version of the annotations from [GDrive](https://drive.google.com/drive/folders/1Ms3s7nZ5Nrux3spLxmMMAQWc5aAIecmv)
+- use scripts/unpack_3dhp_frames.py to unpack the 3DHP videos into imgs
