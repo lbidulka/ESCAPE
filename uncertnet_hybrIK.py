@@ -38,7 +38,7 @@ def get_config():
     os.chdir(config.root)
 
     # Main Settings
-    config.use_cnet = True
+    config.use_cnet = False
     config.use_FF = False
     config.corr_steps = 1
 
@@ -50,11 +50,11 @@ def get_config():
 
     # Tasks
     # config.tasks = ['make_trainset', 'make_testset', 'train', 'test']
-    config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
-    # config.tasks = ['make_trainset', 'train', 'test']
+    # config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
+    config.tasks = ['make_trainset', 'train', 'test']
     # config.tasks = ['make_testset', 'test']
     # config.tasks = ['make_trainset']
-    config.tasks = ['test']
+    # config.tasks = ['test']
 
     # Data
     config.trainset = 'HP3D' # 'HP3D', 'PW3D',
@@ -147,7 +147,7 @@ def create_cnet_dataset(m, cfg, gt_dataset, task='train'):
     backbone_preds = []
     target_xyz_17s = []
     img_idss = []
-    for data in tqdm(gt_loader, dynamic_ncols=True):
+    for i, data in enumerate(tqdm(gt_loader, dynamic_ncols=True)):
         
         (inps, labels, img_ids, bboxes) = data
 
@@ -169,13 +169,32 @@ def create_cnet_dataset(m, cfg, gt_dataset, task='train'):
         target_xyz_17s.append(labels[target_key].detach().cpu().numpy())
         img_idss.append(img_ids.detach().cpu().numpy())
 
-        break   # DEBUG
+        # if i > 250: break   # DEBUG
 
     # dataset_outpath = '{}{}_cnet_hybrik_{}.npy'.format(config.cnet_dataset_path, config.hybrIK_version, task)
     if task == 'train':
         dataset_outpath = config.cnet_trainset_path
     elif task == 'test':
         dataset_outpath = config.cnet_testset_path
+
+    if isinstance(gt_dataset, HP3D):
+    #     all_joint_names = {'spine3', 'spine4', 'spine2', 'spine', 'pelvis', ...     %5       
+    #     'neck', 'head', 'head_top', 'left_clavicle', 'left_shoulder', 'left_elbow', ... %11
+    #    'left_wrist', 'left_hand',  'right_clavicle', 'right_shoulder', 'right_elbow', 'right_wrist', ... %17
+    #    'right_hand', 'left_hip', 'left_knee', 'left_ankle', 'left_foot', 'left_toe', ...        %23   
+    #    'right_hip' , 'right_knee', 'right_ankle', 'right_foot', 'right_toe'}; 
+        EVAL_JOINTS_17 = [
+            4,
+            18, 19, 20,
+            23, 24, 25,
+            2, 5, # NOT SURE IF THIS IS CORRECT SPINE FOR TORSO EQUIVALENCE
+            6, 7, # Not sure if this is correct Head  for Head & Nose equivalence
+            9, 10, 11,
+            14, 15, 16,
+        ]
+        target_xyz_17s = [np.take(t.reshape(-1, 28, 3), EVAL_JOINTS_17, axis=1) for t in target_xyz_17s]
+        target_xyz_17s = [t.reshape(-1, 51) for t in target_xyz_17s]
+
     np.save(dataset_outpath, np.array([np.concatenate(backbone_preds, axis=0), 
                                        np.concatenate(target_xyz_17s, axis=0),
                                        np.repeat(np.concatenate(img_idss, axis=0).reshape(-1,1), backbone_pred.shape[1], axis=1)]))
@@ -289,12 +308,12 @@ def eval_gt(m, cnet, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=False,
 
 def make_trainset(hybrik, cfg, gt_train_dataset_3dpw):
     with torch.no_grad():
-        print('##### Creating CNET 3DPW Trainset #####')
+        print('##### Creating CNET {} Trainset #####'.format(config.trainset))
         create_cnet_dataset(hybrik, cfg, gt_train_dataset_3dpw, task='train')
 
 def make_testset(hybrik, cfg, gt_test_dataset_3dpw):
     with torch.no_grad():
-        print('##### Creating CNET 3DPW Testset #####')
+        print('##### Creating CNET {} Testset #####'.format(config.testset))
         create_cnet_dataset(hybrik, cfg, gt_test_dataset_3dpw, task='test')
 
 def test(hybrik, cnet, cfg, gt_test_dataset_3dpw):
