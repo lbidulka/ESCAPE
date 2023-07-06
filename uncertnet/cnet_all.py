@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from uncertnet.distal_cnet import distal_err_net, distal_cnet
 from utils import errors
+from utils.pose_processing import skeleton_3D_kpt_idxs
 
 class Linear(nn.Module):
     def __init__(self, linear_size, p_dropout):
@@ -42,14 +43,14 @@ class Linear(nn.Module):
         """
         h = self.w1(x)
         h = self.bn1(h)
-        # h = self.relu(h)
-        h = self.l_relu(h)
+        h = self.relu(h)
+        # h = self.l_relu(h)
         h = self.dropout(h)
 
         h = self.w2(h)
         h = self.bn2(h)
-        # h = self.relu(h)
-        h = self.l_relu(h)
+        h = self.relu(h)
+        # h = self.l_relu(h)
         h = self.dropout(h)
 
         y = x + h
@@ -57,7 +58,8 @@ class Linear(nn.Module):
 
 class BaselineModel(nn.Module):
     def __init__(self, linear_size=1024, num_stages=2, p_dropout=0.5, 
-                 use_FF=False, num_p_stages=2, p_linear_size=1024):
+                 use_FF=False, num_p_stages=2, p_linear_size=1024,
+                 num_kpts=17):
         """
 
         Args:
@@ -69,8 +71,9 @@ class BaselineModel(nn.Module):
         super(BaselineModel, self).__init__()
         self.use_FF = use_FF
         self.num_p_stages = num_p_stages
+        self.num_kpts = num_kpts
 
-        input_size = 17 * 3          # Input 3d-joints.
+        input_size = num_kpts * 3          # Input 3d-joints.
         if use_FF: # Fitness Feedback?
             FF_size = 17 #1
             input_size += FF_size
@@ -148,8 +151,8 @@ class BaselineModel(nn.Module):
 
         y = self.w1(x)
         y = self.bn1(y)
-        # y = self.relu(y)
-        y = self.l_relu(y)
+        y = self.relu(y)
+        # y = self.l_relu(y)
         y = self.dropout(y)
 
         # linear blocks
@@ -168,30 +171,40 @@ class adapt_net():
         self.config = config
         self.device = self.config.device
 
+        self.pred_errs = True   # True: predict distal joint errors, False: predict 3d-joints directly
+        self.corr_dims_s = 0 # 3d-joint dims to correct start...    0
+        self.corr_dims_e = 3 # end    3
+
         # Paths
         self.config.ckpt_name = self.config.hybrIK_version + '_cnet_all.pth'
         if config.use_FF:
             self.config.ckpt_name = self.config.ckpt_name[:-4] + '_FF' + self.config.ckpt_name[-4:]
-        # self.config.data_train_path = '{}{}/{}_cnet_hybrik_train.npy'.format(
-        #                                                         config.cnet_dataset_path, 
-        #                                                         config.trainset,
-        #                                                         config.hybrIK_version,)
+
+        # Kpt definition
+        self.distal_kpts = [3, 6, 13, 16,]  # L_Ankle, R_Ankle, L_Wrist, R_Wrist
+
+        self.exclude_in_kpts = [] #self.distal_kpts
+        self.in_kpts = [val for val in range(17) if val not in self.exclude_in_kpts]
+        self.in_kpts.sort()
 
         # Nets
+        # self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,
+        #                           use_FF=config.use_FF, num_p_stages=1, p_linear_size=512,
+        #                           ).to(self.device)
         self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,
                                   use_FF=config.use_FF, num_p_stages=1, p_linear_size=512,
-                                  ).to(self.device)
+                                  num_kpts=len(self.in_kpts)).to(self.device)
         
         # Training
-        self.config.train_split = 0.85
+        self.config.train_split = 0.85   # 0.85
         self.config.err_scale = 1000    # 100
 
-        if config.trainset == 'PW3D':
-            self.config.lr = 1e-4           # 1e-2, 3e-4
-            self.config.weight_decay = 1e-3
-        elif config.trainset == 'HP3D':
-            self.config.lr = 1e-2      
-            self.config.weight_decay = 1e-3
+        # if config.trainset == 'PW3D':
+        #     self.config.lr = 1e-4           # 1e-2, 3e-4
+        #     self.config.weight_decay = 1e-3
+        # elif config.trainset == 'HP3D':
+        self.config.lr = 1e-3
+        self.config.weight_decay = 1e-3
         self.config.batch_size = 1024
         self.config.cnet_train_epochs = 40
         self.config.ep_print_freq = 5
@@ -200,8 +213,17 @@ class adapt_net():
         self.criterion = nn.MSELoss()
         # self.criterion = nn.L1Loss()
 
-        # Misc
-        self.distal_kpts = [3, 6, 13, 16,]  # L_Ankle, R_Ankle, L_Wrist, R_Wrist
+    def _loss(self, backbone_pred, cnet_out, target_xyz_17):
+        '''
+        Loss function
+        '''
+        if self.pred_errs: 
+            cnet_target = backbone_pred - target_xyz_17  # predict errors
+        else:
+            cnet_target = target_xyz_17.clone() # predict kpts
+        cnet_target = torch.flatten(cnet_target[:, self.distal_kpts, :], start_dim=1)
+        loss = self.criterion(cnet_out, cnet_target*self.config.err_scale)
+        return loss
 
     def _corr(self, input):
         backbone_pred = input
@@ -209,11 +231,14 @@ class adapt_net():
         Correct the backbone predictions, no Feedback
         '''
         corr_pred = backbone_pred.detach().clone()
-        inp = torch.flatten(backbone_pred, start_dim=1)
+        inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
         pred_errs = self.cnet(inp) / self.config.err_scale
         pred_errs = pred_errs.reshape(-1, 4, 3) # net output is 4x3 (4 distal joints, 3d) errors
-        # subtract from distal joints
-        corr_pred[:, self.distal_kpts, :] -= pred_errs
+
+        if self.pred_errs:
+            corr_pred[:, self.distal_kpts, self.corr_dims_s:self.corr_dims_e] -= pred_errs[..., self.corr_dims_s:self.corr_dims_e] # subtract from distal joints
+        else: 
+            corr_pred[:, self.distal_kpts, self.corr_dims_s:self.corr_dims_e] = pred_errs[..., self.corr_dims_s:self.corr_dims_e] # predict kpts directly
         return corr_pred
 
     def _corr_FF(self, input):
@@ -224,7 +249,7 @@ class adapt_net():
 
         corr_pred = backbone_pred.detach().clone()
         FF_errs = errors.loss_weighted_rep_no_scale(poses_2d, backbone_pred)
-        inp = torch.cat([FF_errs, torch.flatten(backbone_pred, start_dim=1)], 1)
+        inp = torch.cat([FF_errs, torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)], 1)
         pred_errs = self.cnet(inp) / self.config.err_scale
         pred_errs = pred_errs.reshape(-1, 4, 3) # net output is 4x3 (4 distal joints, 3d) errors
 
@@ -269,18 +294,15 @@ class adapt_net():
             for batch_idx, data in enumerate(gt_trainloader):
                 backbone_pred = data[0][:, 0, :].to(self.device)
                 target_xyz_17 = data[0][:, 1, :].to(self.device)
-                cnet_target = backbone_pred - target_xyz_17
-                cnet_target = torch.flatten(cnet_target[:, self.distal_kpts, :], start_dim=1)
 
                 if self.config.use_FF:
                     FF_errs = errors.loss_weighted_rep_no_scale(target_xyz_17[:,:,:2], backbone_pred)
                     inp = torch.cat([FF_errs, torch.flatten(backbone_pred, start_dim=1)], 1)
                 else:
-                    inp = torch.flatten(backbone_pred, start_dim=1)
+                    inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
                 
                 out = self.cnet(inp)
-
-                loss = self.criterion(out, cnet_target*self.config.err_scale)
+                loss = self._loss(backbone_pred, out, target_xyz_17)
                 loss.backward()
                 self.optimizer.step()
                 self.optimizer.zero_grad()
@@ -291,18 +313,15 @@ class adapt_net():
                 for batch_idx, data in enumerate(gt_valloader):
                     backbone_pred = data[0][:, 0, :].to(self.device)
                     target_xyz_17 = data[0][:, 1, :].to(self.device)
-                    cnet_target = backbone_pred - target_xyz_17
-                    cnet_target = torch.flatten(cnet_target[:, self.distal_kpts, :], start_dim=1)
                     
                     if self.config.use_FF:
                         FF_errs = errors.loss_weighted_rep_no_scale(target_xyz_17[:,:,:2], backbone_pred)
                         inp = torch.cat([FF_errs, torch.flatten(backbone_pred, start_dim=1)], 1)
                     else:
-                        inp = torch.flatten(backbone_pred, start_dim=1)
+                        inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
 
                     out = self.cnet(inp)
-
-                    loss = self.criterion(out, cnet_target*self.config.err_scale)
+                    loss = self._loss(backbone_pred, out, target_xyz_17)
                     cnet_val_losses.append(loss.item())
                 
             mean_train_loss = np.mean(cnet_train_losses)

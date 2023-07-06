@@ -38,7 +38,7 @@ def get_config():
     os.chdir(config.root)
 
     # Main Settings
-    config.use_cnet = False
+    config.use_cnet = True
     config.use_FF = False
     config.corr_steps = 1
 
@@ -50,8 +50,8 @@ def get_config():
 
     # Tasks
     # config.tasks = ['make_trainset', 'make_testset', 'train', 'test']
-    # config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
-    config.tasks = ['make_trainset', 'train', 'test']
+    config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
+    # config.tasks = ['make_trainset', 'train', 'test']
     # config.tasks = ['make_testset', 'test']
     # config.tasks = ['make_trainset']
     # config.tasks = ['test']
@@ -178,17 +178,20 @@ def create_cnet_dataset(m, cfg, gt_dataset, task='train'):
         dataset_outpath = config.cnet_testset_path
 
     if isinstance(gt_dataset, HP3D):
-    #     all_joint_names = {'spine3', 'spine4', 'spine2', 'spine', 'pelvis', ...     %5       
-    #     'neck', 'head', 'head_top', 'left_clavicle', 'left_shoulder', 'left_elbow', ... %11
-    #    'left_wrist', 'left_hand',  'right_clavicle', 'right_shoulder', 'right_elbow', 'right_wrist', ... %17
-    #    'right_hand', 'left_hip', 'left_knee', 'left_ankle', 'left_foot', 'left_toe', ...        %23   
+    #     all_joint_names = 
+    #   {'spine3', 'spine4', 'spine2', 'spine', 
+    #    'pelvis', ...     %5       
+    #    'neck', 'head', 'head_top', 
+    #    'left_clavicle', 'left_shoulder', 'left_elbow', ... %11 'left_wrist', 'left_hand',  
+    #    'right_clavicle', 'right_shoulder', 'right_elbow', 'right_wrist', ... %17 'right_hand', 
+    #    'left_hip', 'left_knee', 'left_ankle', 'left_foot', 'left_toe', ...        %23   
     #    'right_hip' , 'right_knee', 'right_ankle', 'right_foot', 'right_toe'}; 
         EVAL_JOINTS_17 = [
             4,
             18, 19, 20,
             23, 24, 25,
-            2, 5, # NOT SURE IF THIS IS CORRECT SPINE FOR TORSO EQUIVALENCE
-            6, 7, # Not sure if this is correct Head  for Head & Nose equivalence
+            3, 5, # 'spine' == spine_extra, 'neck' == throat (not quite 'neck_extra' as desired)
+            6, 7, # 
             9, 10, 11,
             14, 15, 16,
         ]
@@ -324,12 +327,12 @@ def test(hybrik, cnet, cfg, gt_test_dataset_3dpw):
     print('\n##### 3DPW TESTSET ERRS #####\n')
     tot_corr_PA_MPJPE = eval_gt(hybrik, cnet, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True, use_data_file=True)
     print('\n--- Vanilla: --- ')
-    # with torch.no_grad():
-    #     gt_tot_err = eval_gt(hybrik, cnet, opt, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False)
-    if config.hybrIK_version == 'res34_cam':
-        print('XYZ_14 PA-MPJPE: 45.917672 | MPJPE: 74.113751, x: 27.145215, y: 28.64, z: 51.785723')  # w/ 3DPW
-    if config.hybrIK_version == 'hrw48_wo_3dpw':
-        print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
+    with torch.no_grad():
+        gt_tot_err = eval_gt(hybrik, cnet, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False, use_data_file=True)
+    # if config.hybrIK_version == 'res34_cam':
+    #     print('XYZ_14 PA-MPJPE: 45.917672 | MPJPE: 74.113751, x: 27.145215, y: 28.64, z: 51.785723')  # w/ 3DPW
+    # if config.hybrIK_version == 'hrw48_wo_3dpw':
+    #     print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
 
 def get_dataset(cfg):
     # Datasets for HybrIK

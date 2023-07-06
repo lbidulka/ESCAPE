@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-PD_3D_skeleton_kpt_idxs = {
+skeleton_3D_kpt_idxs = {
         'Head': 8, 
         'Neck': 7, 
         'LShoulder': 12, 'LElbow': 13, 'LWrist': 14,
@@ -16,10 +16,10 @@ def zero_pose_orient(poses, flip=False):
     Align the body axes with the world axes.
     '''
     data_normal = poses.copy()
-    Rhip_idx = PD_3D_skeleton_kpt_idxs['RHip']
-    Lhip_idx = PD_3D_skeleton_kpt_idxs['LHip']
-    Neck_idx = PD_3D_skeleton_kpt_idxs['Neck']
-    Hip_idx = PD_3D_skeleton_kpt_idxs['Hip']
+    Rhip_idx = skeleton_3D_kpt_idxs['RHip']
+    Lhip_idx = skeleton_3D_kpt_idxs['LHip']
+    Neck_idx = skeleton_3D_kpt_idxs['Neck']
+    Hip_idx = skeleton_3D_kpt_idxs['Hip']
 
     data_normal -= data_normal[:, Hip_idx, None, :]
 
