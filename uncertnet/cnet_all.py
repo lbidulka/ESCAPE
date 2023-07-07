@@ -59,7 +59,7 @@ class Linear(nn.Module):
 class BaselineModel(nn.Module):
     def __init__(self, linear_size=1024, num_stages=2, p_dropout=0.5, 
                  use_FF=False, num_p_stages=2, p_linear_size=1024,
-                 num_kpts=17):
+                 num_in_kpts=17, num_out_kpts=4):
         """
 
         Args:
@@ -71,13 +71,13 @@ class BaselineModel(nn.Module):
         super(BaselineModel, self).__init__()
         self.use_FF = use_FF
         self.num_p_stages = num_p_stages
-        self.num_kpts = num_kpts
+        self.num_kpts = num_in_kpts
 
-        input_size = num_kpts * 3          # Input 3d-joints.
+        input_size = num_in_kpts * 3          # Input 3d-joints.
         if use_FF: # Fitness Feedback?
             FF_size = 17 #1
             input_size += FF_size
-        output_size = 4 * 3          # Output distal joint errs
+        output_size = num_out_kpts * 3          # Output distal joint errs
 
         if use_FF:
             embed_size = 128
@@ -167,11 +167,15 @@ class adapt_net():
     '''
     Survive, adapt, overcome
     '''
-    def __init__(self, config) -> None:
-        self.config = config
+    def __init__(self, config, 
+                target_kpts=[3, 6, 13, 16,], 
+                in_kpts=[0,1,2, 4,5, 7,8,9,10,11,12, 14,15, ],
+                # pred_errs = True,
+                ) -> None:
+        self.config = copy.copy(config)
         self.device = self.config.device
 
-        self.pred_errs = True   # True: predict distal joint errors, False: predict 3d-joints directly
+        self.pred_errs = config.pred_errs   # True: predict distal joint errors, False: predict 3d-joints directly
         self.corr_dims_s = 0 # 3d-joint dims to correct start...    0
         self.corr_dims_e = 3 # end    3
 
@@ -181,35 +185,33 @@ class adapt_net():
             self.config.ckpt_name = self.config.ckpt_name[:-4] + '_FF' + self.config.ckpt_name[-4:]
 
         # Kpt definition
-        self.distal_kpts = [3, 6, 13, 16,]  # L_Ankle, R_Ankle, L_Wrist, R_Wrist
+        # self.distal_kpts = target_kpts # [3, 6, 13, 16,]  # L_Ankle, R_Ankle, L_Wrist, R_Wrist
+        # self.exclude_in_kpts = [] #self.distal_kpts
+        # self.in_kpts = in_kpts #[val for val in range(17) if val not in self.exclude_in_kpts]
+        self.in_kpts = in_kpts # [0, 1, 2, 3]
+        self.distal_kpts = target_kpts # [3,]
 
-        self.exclude_in_kpts = [] #self.distal_kpts
-        self.in_kpts = [val for val in range(17) if val not in self.exclude_in_kpts]
         self.in_kpts.sort()
 
         # Nets
         # self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,
         #                           use_FF=config.use_FF, num_p_stages=1, p_linear_size=512,
         #                           ).to(self.device)
-        self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,
+        self.cnet = BaselineModel(linear_size=512, num_stages=3, p_dropout=0.5,
                                   use_FF=config.use_FF, num_p_stages=1, p_linear_size=512,
-                                  num_kpts=len(self.in_kpts)).to(self.device)
+                                  num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.distal_kpts)).to(self.device)
         
         # Training
-        self.config.train_split = 0.85   # 0.85
+        self.config.train_split = 0.8   # 0.85
         self.config.err_scale = 1000    # 100
 
-        # if config.trainset == 'PW3D':
-        #     self.config.lr = 1e-4           # 1e-2, 3e-4
-        #     self.config.weight_decay = 1e-3
-        # elif config.trainset == 'HP3D':
-        self.config.lr = 1e-3
-        self.config.weight_decay = 1e-3
-        self.config.batch_size = 1024
-        self.config.cnet_train_epochs = 40
+        self.config.lr = 1e-2
+        # self.config.weight_decay = 1e-3
+        self.config.batch_size = 2048
+        self.config.cnet_train_epochs = 20  # 200
         self.config.ep_print_freq = 5
 
-        self.optimizer = torch.optim.Adam(self.cnet.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
+        self.optimizer = torch.optim.Adam(self.cnet.parameters(), lr=self.config.lr)#, weight_decay=self.config.weight_decay)
         self.criterion = nn.MSELoss()
         # self.criterion = nn.L1Loss()
 
@@ -233,7 +235,7 @@ class adapt_net():
         corr_pred = backbone_pred.detach().clone()
         inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
         pred_errs = self.cnet(inp) / self.config.err_scale
-        pred_errs = pred_errs.reshape(-1, 4, 3) # net output is 4x3 (4 distal joints, 3d) errors
+        pred_errs = pred_errs.reshape(-1, len(self.distal_kpts), 3) # net output is 4x3 (4 distal joints, 3d) errors
 
         if self.pred_errs:
             corr_pred[:, self.distal_kpts, self.corr_dims_s:self.corr_dims_e] -= pred_errs[..., self.corr_dims_s:self.corr_dims_e] # subtract from distal joints
@@ -291,6 +293,7 @@ class adapt_net():
         best_val_ep = 0
         for ep in tqdm(range(eps), dynamic_ncols=True):
             cnet_train_losses = []
+            self.cnet.train()
             for batch_idx, data in enumerate(gt_trainloader):
                 backbone_pred = data[0][:, 0, :].to(self.device)
                 target_xyz_17 = data[0][:, 1, :].to(self.device)
@@ -308,6 +311,7 @@ class adapt_net():
                 self.optimizer.zero_grad()
                 cnet_train_losses.append(loss.item())
             # Val
+            self.cnet.eval()
             with torch.no_grad():
                 cnet_val_losses = []
                 for batch_idx, data in enumerate(gt_valloader):

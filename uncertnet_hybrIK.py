@@ -28,6 +28,7 @@ from hybrik.datasets import HP3D, PW3D, H36mSMPL
 from hybrik.utils.transforms import get_func_heatmap_to_coord
 
 import uncertnet.distal_cnet as uncertnet_models
+from cnet.multi_distal import multi_distal
 from utils import eval
 
 from uncertnet.cnet_all import adapt_net
@@ -39,6 +40,12 @@ def get_config():
 
     # Main Settings
     config.use_cnet = True
+    config.pred_errs = False  # True: predict distal joint errors, False: predict 3d-joints directly
+    config.use_multi_distal = True  # Indiv. nets for each limb + distal pred
+    config.limbs = ['LA', 'RA', 'LL', 'RL'] # 'LL', 'RL', 'LA', 'RA'    limbs for multi_distal net
+    config.limbs = ['LL', 'RL']
+    # config.limbs = ['LA', 'RA']
+    # config.limbs = ['LL', 'RL', 'LA', 'RA']
     config.use_FF = False
     config.corr_steps = 1
 
@@ -54,7 +61,7 @@ def get_config():
     # config.tasks = ['make_trainset', 'train', 'test']
     # config.tasks = ['make_testset', 'test']
     # config.tasks = ['make_trainset']
-    # config.tasks = ['test']
+    config.tasks = ['test']
 
     # Data
     config.trainset = 'HP3D' # 'HP3D', 'PW3D',
@@ -71,7 +78,7 @@ def get_config():
         config.ckpt = 'hybrik_hrnet48_wo3dpw.pth' 
 
     # cnet dataset
-    config.cnet_ckpt_path = '../../ckpts/hybrIK/'
+    config.cnet_ckpt_path = '../../ckpts/hybrIK/w_{}/'.format(config.trainset)
     config.cnet_dataset_path = '/media/ExtHDD/luke_data/adapt_3d/' #3DPW
 
     config.cnet_trainset_path = '{}{}/{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, 
@@ -219,7 +226,7 @@ def eval_gt(m, cnet, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=False,
     kpt_pred = {}
     kpt_all_pred = {}
     m.eval()
-    cnet.cnet.eval()
+    cnet.eval()
 
     hm_shape = cfg.MODEL.get('HEATMAP_SIZE')
     hm_shape = (hm_shape[1], hm_shape[0])
@@ -370,7 +377,11 @@ def main_worker(cfg, hybrIK_model):
     print(' USING HYBRIK VER: {}'.format(config.hybrIK_version))
     
     hybrik = hybrIK_model.to('cpu')
-    cnet = adapt_net(config)
+
+    if config.use_multi_distal:
+        cnet = multi_distal(config)
+    else:
+        cnet = adapt_net(config)
 
     hybrik_trainset, hybrik_testset = get_dataset(cfg)
 
