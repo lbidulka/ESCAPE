@@ -176,8 +176,7 @@ class adapt_net():
         self.device = self.config.device
 
         self.pred_errs = config.pred_errs   # True: predict distal joint errors, False: predict 3d-joints directly
-        self.corr_dims_s = 0 # 3d-joint dims to correct start...    0
-        self.corr_dims_e = 3 # end    3
+        self.corr_dims = [0,2]  # 3d-joint dims to correct   0,1,2
 
         # Paths
         self.config.ckpt_name = self.config.hybrIK_version + '_cnet_all.pth'
@@ -197,7 +196,7 @@ class adapt_net():
         # self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,
         #                           use_FF=config.use_FF, num_p_stages=1, p_linear_size=512,
         #                           ).to(self.device)
-        self.cnet = BaselineModel(linear_size=512, num_stages=3, p_dropout=0.5,
+        self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5,
                                   use_FF=config.use_FF, num_p_stages=1, p_linear_size=512,
                                   num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.distal_kpts)).to(self.device)
         
@@ -207,8 +206,8 @@ class adapt_net():
 
         self.config.lr = 1e-2
         # self.config.weight_decay = 1e-3
-        self.config.batch_size = 2048
-        self.config.cnet_train_epochs = 20  # 200
+        self.config.batch_size = 1024
+        self.config.cnet_train_epochs = 50  # 200
         self.config.ep_print_freq = 5
 
         self.optimizer = torch.optim.Adam(self.cnet.parameters(), lr=self.config.lr)#, weight_decay=self.config.weight_decay)
@@ -238,9 +237,14 @@ class adapt_net():
         pred_errs = pred_errs.reshape(-1, len(self.distal_kpts), 3) # net output is 4x3 (4 distal joints, 3d) errors
 
         if self.pred_errs:
-            corr_pred[:, self.distal_kpts, self.corr_dims_s:self.corr_dims_e] -= pred_errs[..., self.corr_dims_s:self.corr_dims_e] # subtract from distal joints
+            # corr_pred[:, self.distal_kpts, self.corr_dims_s:self.corr_dims_e] -= pred_errs[..., self.corr_dims_s:self.corr_dims_e] # subtract from distal joints
+
+            for dim in self.corr_dims:
+                corr_pred[:, self.distal_kpts, dim] -= pred_errs[..., dim]
         else: 
-            corr_pred[:, self.distal_kpts, self.corr_dims_s:self.corr_dims_e] = pred_errs[..., self.corr_dims_s:self.corr_dims_e] # predict kpts directly
+            # corr_pred[:, self.distal_kpts, self.corr_dims_s:self.corr_dims_e] = pred_errs[..., self.corr_dims_s:self.corr_dims_e] # predict kpts directly
+            for dim in self.corr_dims:
+                corr_pred[:, self.distal_kpts, dim] = pred_errs[:, self.distal_kpts, dim]
         return corr_pred
 
     def _corr_FF(self, input):

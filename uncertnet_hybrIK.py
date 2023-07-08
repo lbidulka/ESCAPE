@@ -9,8 +9,6 @@ import copy
 import numpy as np
 import torch
 
-from utils import errors
-
 # path_root = Path(__file__)#.parents[3]
 # sys.path.append(str(path_root))
 # sys.path.append(str(path_root)+ 'backbones/HybrIK/hybrik/')
@@ -29,7 +27,8 @@ from hybrik.utils.transforms import get_func_heatmap_to_coord
 
 import uncertnet.distal_cnet as uncertnet_models
 from cnet.multi_distal import multi_distal
-from utils import eval
+from utils import errors
+from datasets.mpii import mpii_dataset
 
 from uncertnet.cnet_all import adapt_net
 
@@ -41,19 +40,21 @@ def get_config():
     # Main Settings
     config.use_cnet = True
     config.pred_errs = False  # True: predict distal joint errors, False: predict 3d-joints directly
+
     config.use_multi_distal = True  # Indiv. nets for each limb + distal pred
     config.limbs = ['LA', 'RA', 'LL', 'RL'] # 'LL', 'RL', 'LA', 'RA'    limbs for multi_distal net
-    config.limbs = ['LL', 'RL']
+    # config.limbs = ['LL', 'RL']
     # config.limbs = ['LA', 'RA']
     # config.limbs = ['LL', 'RL', 'LA', 'RA']
+    
     config.use_FF = False
-    config.corr_steps = 1
+    config.corr_steps = 1   # How many correction iterations at inference?
 
-    config.test_adapt = False
+    config.test_adapt = False 
     config.test_adapt_lr = 1e-3
     config.adapt_steps = 1
 
-    config.train_datalim = None # None
+    config.train_datalim = None # None      For debugging cnet training
 
     # Tasks
     # config.tasks = ['make_trainset', 'make_testset', 'train', 'test']
@@ -62,9 +63,10 @@ def get_config():
     # config.tasks = ['make_testset', 'test']
     # config.tasks = ['make_trainset']
     config.tasks = ['test']
+    # config.tasks = ['train']
 
     # Data
-    config.trainset = 'HP3D' # 'HP3D', 'PW3D',
+    config.trainset = 'MPii' # 'MPii', 'HP3D', 'PW3D',
     config.testset = 'PW3D' # 'HP3D', 'PW3D',
 
     # HybrIK config
@@ -132,7 +134,65 @@ def load_pretrained_hybrik(ckpt=config.ckpt):
 
     return hybrik_model
 
-def create_cnet_dataset(m, cfg, gt_dataset, task='train'):
+def unpack_data(data, dataset, target_key, opt):
+    '''
+    Unpack sample from dataloader & move to GPU
+    '''
+    if dataset == 'MPii':
+        inps = data['pose_input']
+        labels = {}
+        labels['img_center'] = data['img_center']
+        labels[target_key] = data['gt_pose']
+        bboxes = data['bbox']
+        img_ids = torch.ones(len(bboxes)) * -9  # dummy
+    else:
+        (inps, labels, img_ids, bboxes) = data
+
+    if isinstance(inps, list):
+        inps = [inp.cuda(opt.gpu) for inp in inps]
+    else:
+        inps=inps.to(config.device)
+
+    for k, _ in labels.items():
+        try:
+            labels[k] = labels[k].to(config.device)
+        except AttributeError:
+            assert k == 'type'
+    
+    return inps, labels, img_ids, bboxes
+
+def convert_kpts_to_h36m_17s(target_xyzs, dataset):
+    '''
+    Convert joint labels to H36M 17 joints
+    '''
+    if dataset == 'PW3D':
+        return target_xyzs
+    elif dataset == 'HP3D':
+        EVAL_JOINTS_17 = [
+            4,  
+            18, 19, 20, 
+            23, 24, 25,
+            3, 5, # 'spine' == spine_extra, 'neck' == throat (not quite 'neck_extra' as desired)
+            6, 7, # 
+            9, 10, 11,
+            14, 15, 16,
+        ]
+    if dataset == 'MPii':
+        EVAL_JOINTS_17 = [
+            0,
+            1, 4, 7,    # LL
+            2, 5, 8,    # RL
+            6, 12,      # torso, neck
+            15, 15,     #               (theres no head top unfortunately)
+            16, 18, 20, # LA
+            17, 19, 21, # RA
+        ]        
+    target_xyzs = [np.take(t.reshape(-1, t.shape[1], 3), EVAL_JOINTS_17, axis=1) for t in target_xyzs]
+    target_xyzs = [t.reshape(-1, 51) for t in target_xyzs]
+    return target_xyzs
+
+
+def create_cnet_dataset(m, cfg, gt_dataset, dataset, task='train'):
     # Data/Setup
     gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=64, shuffle=False, 
                                             num_workers=16, drop_last=False, pin_memory=True)
@@ -146,67 +206,47 @@ def create_cnet_dataset(m, cfg, gt_dataset, task='train'):
     hm_shape = cfg.MODEL.get('HEATMAP_SIZE')
     hm_shape = (hm_shape[1], hm_shape[0])
 
-    if isinstance(gt_dataset, HP3D):
-        target_key = 'target_xyz'
-    elif isinstance(gt_dataset, PW3D):
-        target_key = 'target_xyz_17'
+    target_keys = {
+        'HP3D': 'target_xyz',
+        'PW3D': 'target_xyz_17',
+        'MPii': 'gt_pose',
+    }
+    target_key = target_keys[dataset]
 
     backbone_preds = []
-    target_xyz_17s = []
+    target_xyzs = []
     img_idss = []
     for i, data in enumerate(tqdm(gt_loader, dynamic_ncols=True)):
-        
-        (inps, labels, img_ids, bboxes) = data
-
-        if isinstance(inps, list):
-            inps = [inp.cuda(opt.gpu) for inp in inps]
-        else:
-            inps=inps.to(config.device)
-
-        for k, _ in labels.items():
-            try:
-                labels[k] = labels[k].to(config.device)
-            except AttributeError:
-                assert k == 'type'
+        inps, labels, img_ids, bboxes = unpack_data(data, dataset, target_key, opt)
 
         m_output = m(inps, flip_test=opt.flip_test, bboxes=bboxes.to(config.device), img_center=labels['img_center'])
         backbone_pred = m_output.pred_xyz_jts_17
 
-        backbone_preds.append(backbone_pred.detach().cpu().numpy())
-        target_xyz_17s.append(labels[target_key].detach().cpu().numpy())
-        img_idss.append(img_ids.detach().cpu().numpy())
+        backbone_preds.append(backbone_pred)
+        target_xyzs.append(labels[target_key])
+        img_idss.append(img_ids)
+        # if i > 4: break   # DEBUG
 
-        # if i > 250: break   # DEBUG
+    print("Detaching & reformatting...")
+    backbone_preds = [b.detach().cpu().numpy() for b in backbone_preds]
+    backbone_preds = np.concatenate(backbone_preds, axis=0)
+    target_xyzs = [t.detach().cpu().numpy() for t in target_xyzs]
+    target_xyz_17s = convert_kpts_to_h36m_17s(target_xyzs, dataset)
+    target_xyz_17s = np.concatenate(target_xyz_17s, axis=0)
+    img_idss = [i.detach().cpu().numpy() for i in img_idss]    
 
-    # dataset_outpath = '{}{}_cnet_hybrik_{}.npy'.format(config.cnet_dataset_path, config.hybrIK_version, task)
+    # normalize target magnitude to match the backbone
+    scale_pred = np.linalg.norm(backbone_preds, keepdims=True)
+    scale_gt = np.linalg.norm(target_xyz_17s, keepdims=True)
+    target_xyz_17s /= (scale_gt / scale_pred)
+
     if task == 'train':
         dataset_outpath = config.cnet_trainset_path
     elif task == 'test':
         dataset_outpath = config.cnet_testset_path
-
-    if isinstance(gt_dataset, HP3D):
-    #     all_joint_names = 
-    #   {'spine3', 'spine4', 'spine2', 'spine', 
-    #    'pelvis', ...     %5       
-    #    'neck', 'head', 'head_top', 
-    #    'left_clavicle', 'left_shoulder', 'left_elbow', ... %11 'left_wrist', 'left_hand',  
-    #    'right_clavicle', 'right_shoulder', 'right_elbow', 'right_wrist', ... %17 'right_hand', 
-    #    'left_hip', 'left_knee', 'left_ankle', 'left_foot', 'left_toe', ...        %23   
-    #    'right_hip' , 'right_knee', 'right_ankle', 'right_foot', 'right_toe'}; 
-        EVAL_JOINTS_17 = [
-            4,
-            18, 19, 20,
-            23, 24, 25,
-            3, 5, # 'spine' == spine_extra, 'neck' == throat (not quite 'neck_extra' as desired)
-            6, 7, # 
-            9, 10, 11,
-            14, 15, 16,
-        ]
-        target_xyz_17s = [np.take(t.reshape(-1, 28, 3), EVAL_JOINTS_17, axis=1) for t in target_xyz_17s]
-        target_xyz_17s = [t.reshape(-1, 51) for t in target_xyz_17s]
-
-    np.save(dataset_outpath, np.array([np.concatenate(backbone_preds, axis=0), 
-                                       np.concatenate(target_xyz_17s, axis=0),
+    print("Saving HybrIK pred dataset to {}".format(dataset_outpath))
+    np.save(dataset_outpath, np.array([backbone_preds,
+                                       target_xyz_17s,
                                        np.repeat(np.concatenate(img_idss, axis=0).reshape(-1,1), backbone_pred.shape[1], axis=1)]))
     return
 
@@ -319,12 +359,12 @@ def eval_gt(m, cnet, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=False,
 def make_trainset(hybrik, cfg, gt_train_dataset_3dpw):
     with torch.no_grad():
         print('##### Creating CNET {} Trainset #####'.format(config.trainset))
-        create_cnet_dataset(hybrik, cfg, gt_train_dataset_3dpw, task='train')
+        create_cnet_dataset(hybrik, cfg, gt_train_dataset_3dpw, dataset=config.trainset, task='train',)
 
 def make_testset(hybrik, cfg, gt_test_dataset_3dpw):
     with torch.no_grad():
         print('##### Creating CNET {} Testset #####'.format(config.testset))
-        create_cnet_dataset(hybrik, cfg, gt_test_dataset_3dpw, task='test')
+        create_cnet_dataset(hybrik, cfg, gt_test_dataset_3dpw, dataset=config.trainset, task='test',)
 
 def test(hybrik, cnet, cfg, gt_test_dataset_3dpw):
     cnet.load_cnets()
@@ -348,28 +388,31 @@ def get_dataset(cfg):
             cfg=cfg,
             ann_file='3DPW_train_new_fresh.json',
             train=False,
-            root='/media/ExtHDD/Mohsen_data/3DPW')
-    # elif config.trainset == 'HP3D':
-    #     trainset = HP3D(
-    #         cfg=cfg,
-    #         ann_file='annotation_mpi_inf_3dhp_train_v2.json',
-    #         train=False,
-    #         root='/media/ExtHDD/luke_data/3DHP')
+            root='/media/ExtHDD/Mohsen_data/3DPW'
+        )
+    elif config.trainset == 'MPii':
+        trainset = mpii_dataset(
+            cfg=cfg,
+            annot_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/mpii_cliffGT.npz',
+            image_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/',
+        )
     elif config.trainset == 'HP3D':
         trainset = HP3D(
             cfg=cfg,
             ann_file='train_v2',   # dumb adjustment...
-            train=True,
-            root='/media/ExtHDD/luke_data/HP3D')
-        
+            train=False,
+            root='/media/ExtHDD/luke_data/HP3D'
+        )
+
     if config.testset == 'PW3D':
         testset = PW3D(
             cfg=cfg,
             ann_file='3DPW_test_new_fresh.json',
             train=False,
-            root='/media/ExtHDD/Mohsen_data/3DPW')
+            root='/media/ExtHDD/Mohsen_data/3DPW'
+        )
     if config.testset == 'HP3D':
-        raise NotImplementedError    
+        raise NotImplementedError    # Need to extract the test img frames
     
     return trainset, testset
 

@@ -5,22 +5,12 @@ from uncertnet.cnet_all import adapt_net
 
 # H36M_KEYPOINTS = [
         #     'pelvis_extra',    # 0
-        #     'left_hip_extra',
-        #     'left_knee',
-        #     'left_ankle',
-        #     'right_hip_extra', 
-        #     'right_knee',      # 5
-        #     'right_ankle',
-        #     'spine_extra',
-        #     'neck_extra',
-        #     'head_extra',      
-        #     'headtop',         # 10
-        #     'left_shoulder',
-        #     'left_elbow',
-        #     'left_wrist',
-        #     'right_shoulder',
-        #     'right_elbow',
-        #     'right_wrist',     # 16
+        #     'left_hip_extra', 'left_knee', 'left_ankle',
+        #     'right_hip_extra', 'right_knee', 'right_ankle', #6
+        #     'spine_extra', 'neck_extra',
+        #     'head_extra', 'headtop',         # 10
+        #     'left_shoulder', 'left_elbow', 'left_wrist',
+        #     'right_shoulder', 'right_elbow', 'right_wrist', # 16
         # ]
 
 class multi_distal():
@@ -33,14 +23,14 @@ class multi_distal():
         self.config = config
 
         # pred_errs = config.pred_errs   # True: predict distal joint errors, False: predict 3d-joints directly
-
-        LL_kpts = [10,9,8,7,0,1,4, 2, 3]  # 0, 1, 2, 3
+        # 10,9,8,7,0,1,4,
+        LL_kpts = [0, 1, 2, 3]  # 0, 1, 2, 3
         LL_target = [3,]
-        RL_kpts = [10,9,8,7,0,1,4, 5, 6]  # 0, 4, 5, 6
+        RL_kpts = [0, 4, 5, 6]  # 0, 4, 5, 6
         RL_target = [6,]
-        LA_kpts = [10,9,8,7,0,1,4, 11, 12, 13]   # 7, 11, 12, 13
+        LA_kpts = [7, 11, 12, 13]   # 7, 11, 12, 13
         LA_target = [13,]
-        RA_kpts = [10,9,8,7,0,1,4, 14, 15, 16]   # 7, 14, 15, 16
+        RA_kpts = [7, 14, 15, 16]   # 7, 14, 15, 16
         RA_target = [16,]
 
         if 'LL' in config.limbs:
