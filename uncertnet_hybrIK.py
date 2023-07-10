@@ -1,5 +1,4 @@
 """uncertnet script for HybrIK"""
-import argparse
 import os
 import sys
 from pathlib import Path
@@ -25,12 +24,12 @@ import pickle as pk
 from hybrik.datasets import HP3D, PW3D, H36mSMPL
 from hybrik.utils.transforms import get_func_heatmap_to_coord
 
-import uncertnet.distal_cnet as uncertnet_models
-from cnet.multi_distal import multi_distal
+
 from utils import errors
 from datasets.mpii import mpii_dataset
+from cnet.multi_distal import multi_distal
+from cnet.full_body import adapt_net
 
-from uncertnet.cnet_all import adapt_net
 
 def get_config():
     config = SimpleNamespace()
@@ -39,9 +38,9 @@ def get_config():
 
     # Main Settings
     config.use_cnet = True
-    config.pred_errs = False  # True: predict distal joint errors, False: predict 3d-joints directly
+    config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
 
-    config.use_multi_distal = True  # Indiv. nets for each limb + distal pred
+    config.use_multi_distal = False  # Indiv. nets for each limb + distal pred
     config.limbs = ['LA', 'RA', 'LL', 'RL'] # 'LL', 'RL', 'LA', 'RA'    limbs for multi_distal net
     # config.limbs = ['LL', 'RL']
     # config.limbs = ['LA', 'RA']

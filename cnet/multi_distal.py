@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from uncertnet.cnet_all import adapt_net
+from .full_body import adapt_net
 
 # H36M_KEYPOINTS = [
         #     'pelvis_extra',    # 0

@@ -1,167 +1,11 @@
-from typing import Any
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
-import copy
 from tqdm import tqdm
+import copy
 
-from types import SimpleNamespace
-
-from uncertnet.distal_cnet import distal_err_net, distal_cnet
-from utils import errors
-from utils.pose_processing import skeleton_3D_kpt_idxs
-
-class Linear(nn.Module):
-    def __init__(self, linear_size, p_dropout):
-        """
-
-        Args:
-            linear_size (int): Number of nodes in the linear layers.
-            p_dropout (float): Dropout probability.
-        """
-        super(Linear, self).__init__()
-
-        self.relu = nn.ReLU(inplace=True)
-        self.l_relu = nn.LeakyReLU(inplace=True)
-        self.dropout = nn.Dropout(p_dropout)
-
-        self.w1 = nn.Linear(linear_size, linear_size)
-        self.bn1 = nn.BatchNorm1d(linear_size)
-
-        self.w2 = nn.Linear(linear_size, linear_size)
-        self.bn2 = nn.BatchNorm1d(linear_size)
-
-    def forward(self, x):
-        """Forward operations of the linear block.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            y (torch.Tensor): Output tensor.
-        """
-        h = self.w1(x)
-        h = self.bn1(h)
-        h = self.relu(h)
-        # h = self.l_relu(h)
-        h = self.dropout(h)
-
-        h = self.w2(h)
-        h = self.bn2(h)
-        h = self.relu(h)
-        # h = self.l_relu(h)
-        h = self.dropout(h)
-
-        y = x + h
-        return y
-
-class BaselineModel(nn.Module):
-    def __init__(self, linear_size=1024, num_stages=2, p_dropout=0.5, 
-                 use_FF=False, num_p_stages=2, p_linear_size=1024,
-                 num_in_kpts=17, num_out_kpts=4):
-        """
-
-        Args:
-            linear_size (int, optional): Number of nodes in the linear layers. Defaults to 1024.
-            num_stages (int, optional): Number to repeat the linear block. Defaults to 2.
-            p_dropout (float, optional): Dropout probability. Defaults to 0.5.
-            predict_14 (bool, optional): Whether to predict 14 3d-joints. Defaults to False.
-        """
-        super(BaselineModel, self).__init__()
-        self.use_FF = use_FF
-        self.num_p_stages = num_p_stages
-        self.num_kpts = num_in_kpts
-
-        input_size = num_in_kpts * 3          # Input 3d-joints.
-        if use_FF: # Fitness Feedback?
-            FF_size = 17 #1
-            input_size += FF_size
-        output_size = num_out_kpts * 3          # Output distal joint errs
-
-        if use_FF:
-            embed_size = 128
-            # FF 
-            # embedding
-            self.w_FF_embd = nn.Linear(FF_size, embed_size)
-            self.bn_FF_embd = nn.BatchNorm1d(embed_size)
-            # linear blocks
-            self.w1_FF = nn.Linear(embed_size, p_linear_size)
-            self.bn1_FF = nn.BatchNorm1d(p_linear_size)
-            # if num_p_stages != 0:
-            #     self.linear_FF_stages = [Linear(p_linear_size, p_dropout) for _ in range(num_p_stages)]
-            #     self.linear_FF_stages = nn.ModuleList(self.linear_FF_stages)
-            # Input 
-            # embedding
-            self.w_in_embd = nn.Linear(input_size-FF_size, embed_size)
-            self.bn_in_embd = nn.BatchNorm1d(embed_size)
-            # linear blocks
-            self.w1_in = nn.Linear(embed_size, p_linear_size)
-            self.bn1_in = nn.BatchNorm1d(p_linear_size)
-            # if num_p_stages != 0:
-            #     self.linear_in_stages = [Linear(p_linear_size, p_dropout) for _ in range(num_p_stages)]
-            #     self.linear_in_stages = nn.ModuleList(self.linear_in_stages)
-
-            # self.w1 = nn.Linear(embed_size*2, linear_size)
-            self.w1 = nn.Linear(p_linear_size*2, linear_size)
-        else:
-            self.w1 = nn.Linear(input_size, linear_size)
-        self.bn1 = nn.BatchNorm1d(linear_size)
-
-        self.linear_stages = [Linear(linear_size, p_dropout) for _ in range(num_stages)]
-        self.linear_stages = nn.ModuleList(self.linear_stages)
-
-        self.w2 = nn.Linear(linear_size, output_size)
-
-        self.relu = nn.ReLU(inplace=True)
-        self.l_relu = nn.LeakyReLU(inplace=True)
-        self.dropout = nn.Dropout(p_dropout)
-
-    def forward(self, x):
-        """Forward operations of the linear block.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            y (torch.Tensor): Output tensor.
-        """
-        if self.use_FF:
-            # pose and FF streams
-            FF = x[:, :17]
-            FF = self.bn_FF_embd(self.w_FF_embd(FF))
-            FF = self.w1_FF(FF)
-            FF = self.bn1_FF(FF)
-            FF = self.relu(FF)
-            # if self.num_p_stages != 0:
-            #     for linear in self.linear_FF_stages:
-            #         FF = linear(FF)            
-
-            x = x[:, 17:]
-            x = self.bn_in_embd(self.w_in_embd(x))
-            x = self.w1_in(x)
-            x = self.bn1_in(x)
-            x = self.relu(x)
-            # if self.num_p_stages != 0:
-            #     for linear in self.linear_in_stages:
-            #         x = linear(x)            
-
-            # Concatenate embedded inputs
-            x = torch.cat([x, FF], dim=1)
-
-        y = self.w1(x)
-        y = self.bn1(y)
-        y = self.relu(y)
-        # y = self.l_relu(y)
-        y = self.dropout(y)
-
-        # linear blocks
-        for linear in self.linear_stages:
-            y = linear(y)
-
-        y = self.w2(y)
-
-        return y
+from .residual import BaselineModel
+import utils.errors as errors
 
 class adapt_net():
     '''
@@ -176,7 +20,7 @@ class adapt_net():
         self.device = self.config.device
 
         self.pred_errs = config.pred_errs   # True: predict distal joint errors, False: predict 3d-joints directly
-        self.corr_dims = [0,2]  # 3d-joint dims to correct   0,1,2
+        self.corr_dims = [0,1,2]  # 3d-joint dims to correct   0,1,2
 
         # Paths
         self.config.ckpt_name = self.config.hybrIK_version + '_cnet_all.pth'
