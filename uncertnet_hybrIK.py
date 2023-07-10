@@ -30,6 +30,8 @@ from datasets.mpii import mpii_dataset
 from cnet.multi_distal import multi_distal
 from cnet.full_body import adapt_net
 
+from core.cnet_data import create_cnet_dataset_w_HybrIK
+from core.cnet_eval import eval_gt
 
 def get_config():
     config = SimpleNamespace()
@@ -47,7 +49,6 @@ def get_config():
     # config.limbs = ['LL', 'RL', 'LA', 'RA']
     
     config.corr_steps = 1   # How many correction iterations at inference?
-
     config.test_adapt = False 
     config.test_adapt_lr = 1e-3
     config.adapt_steps = 1
@@ -71,10 +72,10 @@ def get_config():
     config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
 
     if config.hybrIK_version == 'res34_cam':
-        config.cfg = 'configs/256x192_adam_lr1e-3-res34_smpl_3d_cam_2x_mix.yaml'
+        config.hybrik_cfg = 'configs/256x192_adam_lr1e-3-res34_smpl_3d_cam_2x_mix.yaml'
         config.ckpt = 'pretrained_w_cam.pth'
     if config.hybrIK_version == 'hrw48_wo_3dpw':
-        config.cfg = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_wo_pw3d.yaml'    # w/o 3DPW
+        config.hybrik_cfg = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_wo_pw3d.yaml'    # w/o 3DPW
         config.ckpt = 'hybrik_hrnet48_wo3dpw.pth' 
 
     # cnet dataset
@@ -115,11 +116,9 @@ def print_useful_configs(config):
     print(' ----------------- \n') 
     return
 
-config = get_config()
-cfg = update_config(config.cfg)
-
-def load_pretrained_hybrik(ckpt=config.ckpt):
-    hybrik_model = builder.build_sppe(cfg.MODEL)
+def load_pretrained_hybrik(config, hybrik_cfg,):
+    ckpt = config.ckpt
+    hybrik_model = builder.build_sppe(hybrik_cfg.MODEL)
     
     print(f'\nLoading HybrIK model from {ckpt}...\n')
     save_dict = torch.load(ckpt, map_location='cpu')
@@ -131,268 +130,46 @@ def load_pretrained_hybrik(ckpt=config.ckpt):
 
     return hybrik_model
 
-def unpack_data(data, dataset, target_key, opt):
-    '''
-    Unpack sample from dataloader & move to GPU
-    '''
-    if dataset == 'MPii':
-        inps = data['pose_input']
-        labels = {}
-        labels['img_center'] = data['img_center']
-        labels[target_key] = data['gt_pose']
-        bboxes = data['bbox']
-        img_ids = torch.ones(len(bboxes)) * -9  # dummy
-    else:
-        (inps, labels, img_ids, bboxes) = data
-
-    if isinstance(inps, list):
-        inps = [inp.cuda(opt.gpu) for inp in inps]
-    else:
-        inps=inps.to(config.device)
-
-    for k, _ in labels.items():
-        try:
-            labels[k] = labels[k].to(config.device)
-        except AttributeError:
-            assert k == 'type'
-    
-    return inps, labels, img_ids, bboxes
-
-def convert_kpts_to_h36m_17s(target_xyzs, dataset):
-    '''
-    Convert joint labels to H36M 17 joints
-    '''
-    if dataset == 'PW3D':
-        return target_xyzs
-    elif dataset == 'HP3D':
-        EVAL_JOINTS_17 = [
-            4,  
-            18, 19, 20, 
-            23, 24, 25,
-            3, 5, # 'spine' == spine_extra, 'neck' == throat (not quite 'neck_extra' as desired)
-            6, 7, # 
-            9, 10, 11,
-            14, 15, 16,
-        ]
-    if dataset == 'MPii':
-        EVAL_JOINTS_17 = [
-            0,
-            1, 4, 7,    # LL
-            2, 5, 8,    # RL
-            6, 12,      # torso, neck
-            15, 15,     #               (theres no head top unfortunately)
-            16, 18, 20, # LA
-            17, 19, 21, # RA
-        ]        
-    target_xyzs = [np.take(t.reshape(-1, t.shape[1], 3), EVAL_JOINTS_17, axis=1) for t in target_xyzs]
-    target_xyzs = [t.reshape(-1, 51) for t in target_xyzs]
-    return target_xyzs
-
-
-def create_cnet_dataset(m, cfg, gt_dataset, dataset, task='train'):
-    # Data/Setup
-    gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=64, shuffle=False, 
-                                            num_workers=16, drop_last=False, pin_memory=True)
-    m.eval()
-    m = m.to(config.device)
-
-    opt = SimpleNamespace()
-    opt.device = config.device
-    opt.flip_test = True
-
-    hm_shape = cfg.MODEL.get('HEATMAP_SIZE')
-    hm_shape = (hm_shape[1], hm_shape[0])
-
-    target_keys = {
-        'HP3D': 'target_xyz',
-        'PW3D': 'target_xyz_17',
-        'MPii': 'gt_pose',
-    }
-    target_key = target_keys[dataset]
-
-    backbone_preds = []
-    target_xyzs = []
-    img_idss = []
-    for i, data in enumerate(tqdm(gt_loader, dynamic_ncols=True)):
-        inps, labels, img_ids, bboxes = unpack_data(data, dataset, target_key, opt)
-
-        m_output = m(inps, flip_test=opt.flip_test, bboxes=bboxes.to(config.device), img_center=labels['img_center'])
-        backbone_pred = m_output.pred_xyz_jts_17
-
-        backbone_preds.append(backbone_pred)
-        target_xyzs.append(labels[target_key])
-        img_idss.append(img_ids)
-        # if i > 4: break   # DEBUG
-
-    print("Detaching & reformatting...")
-    backbone_preds = [b.detach().cpu().numpy() for b in backbone_preds]
-    backbone_preds = np.concatenate(backbone_preds, axis=0)
-    target_xyzs = [t.detach().cpu().numpy() for t in target_xyzs]
-    target_xyz_17s = convert_kpts_to_h36m_17s(target_xyzs, dataset)
-    target_xyz_17s = np.concatenate(target_xyz_17s, axis=0)
-    img_idss = [i.detach().cpu().numpy() for i in img_idss]    
-
-    # normalize target magnitude to match the backbone
-    scale_pred = np.linalg.norm(backbone_preds, keepdims=True)
-    scale_gt = np.linalg.norm(target_xyz_17s, keepdims=True)
-    target_xyz_17s /= (scale_gt / scale_pred)
-
-    if task == 'train':
-        dataset_outpath = config.cnet_trainset_path
-    elif task == 'test':
-        dataset_outpath = config.cnet_testset_path
-    print("Saving HybrIK pred dataset to {}".format(dataset_outpath))
-    np.save(dataset_outpath, np.array([backbone_preds,
-                                       target_xyz_17s,
-                                       np.repeat(np.concatenate(img_idss, axis=0).reshape(-1,1), backbone_pred.shape[1], axis=1)]))
-    return
-
-def eval_gt(m, cnet, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=False, test_cnet=False, use_data_file=False):
-    if config.test_adapt:
-        batch_size = 1
-    else:
-        batch_size = 128
-    gt_eval_dataset_for_scoring = gt_eval_dataset
-    # Data/Setup
-    if use_data_file:
-        test_file = config.cnet_testset_path
-        test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
-        gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
-    gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False, 
-                                                 num_workers=16, drop_last=False, pin_memory=True)
-    kpt_pred = {}
-    kpt_all_pred = {}
-    m.eval()
-    cnet.eval()
-
-    hm_shape = cfg.MODEL.get('HEATMAP_SIZE')
-    hm_shape = (hm_shape[1], hm_shape[0])
-    pve_list = []
-
-    errs = []
-    errs_s = []
-
-    opt = SimpleNamespace()
-    opt.device = config.device
-    opt.flip_test = True
-
-    def set_bn_eval(module):
-        ''' Batch Norm layer freezing '''
-        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-            module.eval()
-
-    for data in tqdm(gt_eval_loader, dynamic_ncols=True):
-        if use_data_file:
-            labels = {}
-            output = SimpleNamespace()
-            output.pred_xyz_jts_17 = data[0][:,0].to(config.device)
-            labels['target_xyz_17'] = data[0][:,1].to(config.device)
-            img_ids = data[0][:,2,:1].to(config.device)
-        else:
-            (inps, labels, img_ids, bboxes) = data
-            if isinstance(inps, list):
-                inps = [inp.cuda(opt.gpu) for inp in inps]
-            else:
-                # inps = inps.cuda(opt.gpu)
-                inps=inps.to(config.device)
-            for k, _ in labels.items():
-                try:
-                    labels[k] = labels[k].to(config.device)
-                except AttributeError:
-                    assert k == 'type'
-
-            with torch.no_grad():
-                output = m(inps, flip_test=opt.flip_test, bboxes=bboxes.to(config.device), img_center=labels['img_center'])
-        
-        if test_cnet:
-            backbone_pred = output.pred_xyz_jts_17
-            backbone_pred = backbone_pred.reshape(-1, 17, 3)
-
-            if config.test_adapt:
-                for i in range(config.adapt_steps):
-                    # Setup Optimizer
-                    cnet.load_cnets(print_str=False)   # reset to trained cnet
-                    cnet.cnet.train()
-                    cnet.cnet.apply(set_bn_eval)
-                    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, cnet.cnet.parameters()),
-                                                  lr=config.test_adapt_lr)#, weight_decay=1e-3)
-                    # Get 2d reproj loss & take grad step
-                    corrected_pred = cnet(backbone_pred)
-                    poses_2d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)[:,:,:2]    # TEMP: using labels for 2D
-                    loss = errors.loss_weighted_rep_no_scale(poses_2d, corrected_pred, sum_kpts=True).sum()
-                    loss.backward()
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    # get corrected pred, with adjusted cnet
-                    cnet_in = backbone_pred
-            else:
-                cnet_in = backbone_pred
-
-            if config.use_cnet:
-                with torch.no_grad():
-                    for i in range(config.corr_steps):
-                        corrected_pred = cnet(cnet_in)
-                        cnet_in = corrected_pred
-                output.pred_xyz_jts_17 = corrected_pred.reshape(labels['target_xyz_17'].shape[0], -1)
-            else:
-                output.pred_xyz_jts_17 = backbone_pred.reshape(labels['target_xyz_17'].shape[0], -1)
-
-        pred_xyz_jts_17 = output.pred_xyz_jts_17.reshape(labels['target_xyz_17'].shape[0], 17, 3)
-        pred_xyz_jts_17 = pred_xyz_jts_17.cpu().data.numpy()
-        assert pred_xyz_jts_17.ndim in [2, 3]
-        pred_xyz_jts_17 = pred_xyz_jts_17.reshape(pred_xyz_jts_17.shape[0], 17, 3)
-        for i in range(pred_xyz_jts_17.shape[0]):
-            kpt_pred[int(img_ids[i])] = {
-                'xyz_17': pred_xyz_jts_17[i],
-            }
-        kpt_all_pred.update(kpt_pred)
-
-    tot_err_17 = gt_eval_dataset_for_scoring.evaluate_xyz_17(kpt_all_pred, os.path.join('exp', 'test_3d_kpt.json'))
-    return tot_err_17
-
-def make_trainset(hybrik, cfg, gt_train_dataset_3dpw):
+def make_trainset(hybrik, gt_train_dataset_3dpw, config):
     with torch.no_grad():
         print('##### Creating CNET {} Trainset #####'.format(config.trainset))
-        create_cnet_dataset(hybrik, cfg, gt_train_dataset_3dpw, dataset=config.trainset, task='train',)
+        create_cnet_dataset_w_HybrIK(hybrik, config, gt_train_dataset_3dpw, dataset=config.trainset, task='train',)
 
-def make_testset(hybrik, cfg, gt_test_dataset_3dpw):
+def make_testset(hybrik, gt_test_dataset_3dpw, config):
     with torch.no_grad():
         print('##### Creating CNET {} Testset #####'.format(config.testset))
-        create_cnet_dataset(hybrik, cfg, gt_test_dataset_3dpw, dataset=config.trainset, task='test',)
+        create_cnet_dataset_w_HybrIK(hybrik, config, gt_test_dataset_3dpw, dataset=config.trainset, task='test',)
 
-def test(hybrik, cnet, cfg, gt_test_dataset_3dpw):
+def test(hybrik, cnet, gt_test_dataset_3dpw, config):
     cnet.load_cnets()
     hybrik = hybrik.to(config.device)
-    heatmap_to_coord = get_func_heatmap_to_coord(cfg) 
 
     print('\n##### 3DPW TESTSET ERRS #####\n')
-    tot_corr_PA_MPJPE = eval_gt(hybrik, cnet, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=True, use_data_file=True)
+    tot_corr_MPJPE = eval_gt(hybrik, cnet, config, gt_test_dataset_3dpw, 
+                                test_cnet=True, use_data_file=True)
     print('\n--- Vanilla: --- ')
     with torch.no_grad():
-        gt_tot_err = eval_gt(hybrik, cnet, cfg, gt_test_dataset_3dpw, heatmap_to_coord, test_vertice=False, test_cnet=False, use_data_file=True)
-    # if config.hybrIK_version == 'res34_cam':
-    #     print('XYZ_14 PA-MPJPE: 45.917672 | MPJPE: 74.113751, x: 27.145215, y: 28.64, z: 51.785723')  # w/ 3DPW
-    # if config.hybrIK_version == 'hrw48_wo_3dpw':
-    #     print('XYZ_14 PA-MPJPE: 49.346562 | MPJPE: 88.707589, x: 29.233308, y: 30.03, z: 66.807150')  # wo/ 3DPW
+        gt_tot_err = eval_gt(hybrik, cnet, config, gt_test_dataset_3dpw, 
+                             test_cnet=False, use_data_file=True)
 
-def get_dataset(cfg):
+def get_dataset(hybrik_cfg, config):
     # Datasets for HybrIK
     if config.trainset == 'PW3D':
         trainset = PW3D(
-            cfg=cfg,
+            cfg=hybrik_cfg,
             ann_file='3DPW_train_new_fresh.json',
             train=False,
             root='/media/ExtHDD/Mohsen_data/3DPW'
         )
     elif config.trainset == 'MPii':
         trainset = mpii_dataset(
-            cfg=cfg,
+            cfg=hybrik_cfg,
             annot_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/mpii_cliffGT.npz',
             image_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/',
         )
     elif config.trainset == 'HP3D':
         trainset = HP3D(
-            cfg=cfg,
+            cfg=hybrik_cfg,
             ann_file='train_v2',   # dumb adjustment...
             train=False,
             root='/media/ExtHDD/luke_data/HP3D'
@@ -400,7 +177,7 @@ def get_dataset(cfg):
 
     if config.testset == 'PW3D':
         testset = PW3D(
-            cfg=cfg,
+            cfg=hybrik_cfg,
             ann_file='3DPW_test_new_fresh.json',
             train=False,
             root='/media/ExtHDD/Mohsen_data/3DPW'
@@ -410,9 +187,8 @@ def get_dataset(cfg):
     
     return trainset, testset
 
-def main_worker(cfg, hybrIK_model): 
+def main_worker(hybrik_cfg, hybrIK_model, config): 
     print(' USING HYBRIK VER: {}'.format(config.hybrIK_version))
-    
     hybrik = hybrIK_model.to('cpu')
 
     if config.use_multi_distal:
@@ -420,18 +196,20 @@ def main_worker(cfg, hybrIK_model):
     else:
         cnet = adapt_net(config)
 
-    hybrik_trainset, hybrik_testset = get_dataset(cfg)
+    cnet_trainset, cnet_testset = get_dataset(hybrik_cfg, config)
 
     if 'make_trainset' in config.tasks:
-        make_trainset(hybrik, cfg, hybrik_trainset)
+        make_trainset(hybrik, cnet_trainset, config)
     if 'make_testset' in config.tasks: 
-        make_testset(hybrik, cfg, hybrik_testset)    
+        make_testset(hybrik, cnet_testset, config)
     if 'train' in config.tasks:
         cnet.train()
     if 'test' in config.tasks:
-        test(hybrik, cnet, cfg, hybrik_testset)
+        test(hybrik, cnet, cnet_testset, config)
 
 if __name__ == "__main__":    
-    hybrik = load_pretrained_hybrik()
-    main_worker(cfg, hybrIK_model=hybrik)
+    config = get_config()
+    hybrik_cfg = update_config(config.hybrik_cfg) 
+    hybrik_model = load_pretrained_hybrik(config, hybrik_cfg)
+    main_worker(hybrik_cfg, hybrik_model, config)
 
