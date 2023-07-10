@@ -58,16 +58,17 @@ def make_testset(hybrik, gt_test_dataset_3dpw, config):
         print('##### Creating CNET {} Testset #####'.format(config.testset))
         create_cnet_dataset_w_HybrIK(hybrik, config, gt_test_dataset_3dpw, dataset=config.trainset, task='test',)
 
-def test(hybrik, cnet, gt_test_dataset_3dpw, config):
+def test(hybrik, cnet, R_cnet, gt_test_dataset_3dpw, config):
     cnet.load_cnets()
+    R_cnet.load_cnets()
     hybrik = hybrik.to(config.device)
 
     print('\n##### 3DPW TESTSET ERRS #####\n')
-    tot_corr_MPJPE = eval_gt(hybrik, cnet, config, gt_test_dataset_3dpw, 
+    tot_corr_MPJPE = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
                                 test_cnet=True, use_data_file=True)
     print('\n--- Vanilla: --- ')
     with torch.no_grad():
-        gt_tot_err = eval_gt(hybrik, cnet, config, gt_test_dataset_3dpw, 
+        gt_tot_err = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
                              test_cnet=False, use_data_file=True)
 
 def get_dataset(hybrik_cfg, config):
@@ -111,8 +112,10 @@ def main_worker(hybrik_cfg, hybrIK_model, config):
 
     if config.use_multi_distal:
         cnet = multi_distal(config)
+        # TODO: MULTI-DISTAL R-CNET
     else:
-        cnet = adapt_net(config)
+        cnet = adapt_net(config, target_kpts=config.distal_kpts,)
+        R_cnet = adapt_net(config, target_kpts=config.proximal_kpts, R=True,)
 
     cnet_trainset, cnet_testset = get_dataset(hybrik_cfg, config)
 
@@ -122,8 +125,9 @@ def main_worker(hybrik_cfg, hybrIK_model, config):
         make_testset(hybrik, cnet_testset, config)
     if 'train' in config.tasks:
         cnet.train()
+        R_cnet.train()
     if 'test' in config.tasks:
-        test(hybrik, cnet, cnet_testset, config)
+        test(hybrik, cnet, R_cnet, cnet_testset, config)
 
 if __name__ == "__main__":    
     config = get_config()

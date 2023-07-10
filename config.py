@@ -11,18 +11,23 @@ def get_config():
     config.use_cnet = True
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
 
+    config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
+    config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
+
     config.use_multi_distal = False  # Indiv. nets for each limb + distal pred
     config.limbs = ['LA', 'RA', 'LL', 'RL'] # 'LL', 'RL', 'LA', 'RA'    limbs for multi_distal net
     # config.limbs = ['LL', 'RL']
     # config.limbs = ['LA', 'RA']
     # config.limbs = ['LL', 'RL', 'LA', 'RA']
     
-    config.corr_steps = 1   # How many correction iterations at inference?
+    config.corr_steps = 5   # How many correction iterations at inference?
+    config.corr_step_size = 0.1 # for err pred, what fraction of CNet corr to do
     config.test_adapt = False 
     config.test_adapt_lr = 1e-3
-    config.adapt_steps = 1
+    config.adapt_steps = 5
 
     config.train_datalim = None # None      For debugging cnet training
+    # config.test_eval_limit = 2_000 # 50_000    For debugging cnet testing
 
     # Tasks
     # config.tasks = ['make_trainset', 'make_testset', 'train', 'test']

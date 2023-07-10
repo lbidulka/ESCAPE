@@ -64,16 +64,16 @@ class multi_distal():
 
     def train(self,):
         if 'LL' in self.config.limbs:
-            print("\n --- LL ---")
+            print("\n ----- LL -----")
             self.cnet_LL.train()
         if 'RL' in self.config.limbs:
-            print("\n --- RL ---")
+            print("\n ----- RL -----")
             self.cnet_RL.train()
         if 'LA' in self.config.limbs:
-            print("\n --- LA ---")
+            print("\n ----- LA -----")
             self.cnet_LA.train()
         if 'RA' in self.config.limbs:
-            print("\n --- RA ---")
+            print("\n ----- RA -----")
             self.cnet_RA.train()
     
     def load_cnets(self, print_str=True):

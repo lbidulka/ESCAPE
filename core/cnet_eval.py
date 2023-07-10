@@ -2,11 +2,25 @@ import torch
 import numpy as np
 from types import SimpleNamespace
 from tqdm import tqdm
+import torch.nn as nn
 import os
 
 import utils.errors as errors
 
-def eval_gt(m, cnet, config, gt_eval_dataset, 
+
+def cnet_rcnet_self_consistency(config, backbone_pred, Rcnet_pred, err_scale=1000):
+    '''
+    CNet self consistency loss for TTT
+
+    computes L2(proximal kpts predicted by Rcnet from cnet preds, orignal backbone preds)
+    '''
+
+    # loss = nn.MSELoss(backbone_pred[:, config.proximal_kpts, :], Rcnet_pred[:, config.proximal_kpts, :])
+    loss = torch.square((backbone_pred[:,config.proximal_kpts,:] - Rcnet_pred[:,config.proximal_kpts,:])*err_scale).mean()
+
+    return loss
+
+def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset, 
             test_cnet=False, use_data_file=False):
     if config.test_adapt:
         batch_size = 1
@@ -24,6 +38,7 @@ def eval_gt(m, cnet, config, gt_eval_dataset,
     kpt_all_pred = {}
     m.eval()
     cnet.eval()
+    R_cnet.eval()
 
     flip_test = True
 
@@ -32,7 +47,7 @@ def eval_gt(m, cnet, config, gt_eval_dataset,
         if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
             module.eval()
 
-    for data in tqdm(gt_eval_loader, dynamic_ncols=True):
+    for it, data in enumerate(tqdm(gt_eval_loader, dynamic_ncols=True)):
         if use_data_file:
             labels = {}
             output = SimpleNamespace()
@@ -69,8 +84,12 @@ def eval_gt(m, cnet, config, gt_eval_dataset,
                                                   lr=config.test_adapt_lr)#, weight_decay=1e-3)
                     # Get 2d reproj loss & take grad step
                     corrected_pred = cnet(backbone_pred)
-                    poses_2d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)[:,:,:2]    # TEMP: using labels for 2D
-                    loss = errors.loss_weighted_rep_no_scale(poses_2d, corrected_pred, sum_kpts=True).sum()
+
+                    loss = cnet_rcnet_self_consistency(config, backbone_pred, R_cnet(corrected_pred))
+
+                    # poses_2d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)[:,:,:2]    # TEMP: using labels for 2D
+                    # loss = errors.loss_weighted_rep_no_scale(poses_2d, corrected_pred, sum_kpts=True).sum()
+                    
                     loss.backward()
                     optimizer.step()
                     optimizer.zero_grad()
@@ -97,6 +116,9 @@ def eval_gt(m, cnet, config, gt_eval_dataset,
                 'xyz_17': pred_xyz_jts_17[i],
             }
         kpt_all_pred.update(kpt_pred)
+
+        # if it > config.test_eval_limit:
+        #     break
 
     tot_err_17 = gt_eval_dataset_for_scoring.evaluate_xyz_17(kpt_all_pred, os.path.join('exp', 'test_3d_kpt.json'))
     return tot_err_17

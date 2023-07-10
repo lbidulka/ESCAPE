@@ -13,17 +13,25 @@ class adapt_net():
     '''
     def __init__(self, config, 
                 target_kpts=[3, 6, 13, 16,], 
-                in_kpts=[0,1,2, 4,5, 7,8,9,10,11,12, 14,15, ],
-                # pred_errs = True,
+                in_kpts=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
+                R=False,    # R-CNet ?
                 ) -> None:
         self.config = copy.copy(config)
         self.device = self.config.device
-
+        self.R = R
         self.pred_errs = config.pred_errs   # True: predict distal joint errors, False: predict 3d-joints directly
         self.corr_dims = [0,1,2]  # 3d-joint dims to correct   0,1,2
 
         # Paths
-        self.config.ckpt_name = self.config.hybrIK_version + '_cnet_all.pth'
+        self.config.ckpt_name = self.config.hybrIK_version 
+        if R:
+            self.config.ckpt_name += '_rcnet'
+        else:
+            self.config.ckpt_name += '_cnet'
+        if self.config.use_multi_distal:
+            self.config.ckpt_name += '_md.pth'
+        else:
+            self.config.ckpt_name += '_all.pth'
 
         # Kpt definition
         # self.distal_kpts = target_kpts # [3, 6, 13, 16,]  # L_Ankle, R_Ankle, L_Wrist, R_Wrist
@@ -76,13 +84,11 @@ class adapt_net():
         pred_errs = pred_errs.reshape(-1, len(self.distal_kpts), 3) # net output is 4x3 (4 distal joints, 3d) errors
 
         if self.pred_errs:
-            # corr_pred[:, self.distal_kpts, self.corr_dims_s:self.corr_dims_e] -= pred_errs[..., self.corr_dims_s:self.corr_dims_e] # subtract from distal joints
-
             for dim in self.corr_dims:
-                corr_pred[:, self.distal_kpts, dim] -= pred_errs[..., dim]
-        else: 
-            # corr_pred[:, self.distal_kpts, self.corr_dims_s:self.corr_dims_e] = pred_errs[..., self.corr_dims_s:self.corr_dims_e] # predict kpts directly
+                corr_pred[:, self.distal_kpts, dim] -= self.config.corr_step_size*pred_errs[..., dim]
+        else:
             for dim in self.corr_dims:
+                # TODO: ADD STEP SIZE TO THIS CORRECTION
                 corr_pred[:, self.distal_kpts, dim] = pred_errs[:, self.distal_kpts, dim]
         return corr_pred
 
@@ -90,7 +96,6 @@ class adapt_net():
         return self._corr(input)
 
     def train(self,):
-        # data_path = self.config.cnet_dataset_path + 'cnet_hybrik_train.npy'
         if self.config.train_datalim is not None:
             data_all = torch.from_numpy(np.load(self.config.cnet_trainset_path)).float()[:, :self.config.train_datalim]
         else:
@@ -112,6 +117,7 @@ class adapt_net():
                                                    num_workers=16, drop_last=False, pin_memory=True)
 
         # Train
+        print('\n--- Training: {} ---'.format('R-CNet' if self.R else 'CNet'))
         eps = self.config.cnet_train_epochs
         best_val_loss = 1e10
         best_val_ep = 0
@@ -164,12 +170,13 @@ class adapt_net():
         Load the best validation checkpoints
         '''
         load_path = self.config.cnet_ckpt_path + self.config.ckpt_name
-        if print_str: print("\nLoading cnet from: ", load_path)
+        if print_str: 
+            print("\nLoading {} from: {}".format('R-CNet' if self.R else 'CNet', load_path))
         all_net_ckpt_dict = torch.load(load_path)
         self.cnet.load_state_dict(all_net_ckpt_dict) 
     
     def save(self, path):
-        print("saving cnet to: ", path)
+        print('saving {} to: {}'.format('R-CNet' if self.R else 'CNet', path))
         torch.save(self.cnet.state_dict(), path)
     
     def eval(self,):
