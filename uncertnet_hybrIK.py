@@ -46,7 +46,6 @@ def get_config():
     # config.limbs = ['LA', 'RA']
     # config.limbs = ['LL', 'RL', 'LA', 'RA']
     
-    config.use_FF = False
     config.corr_steps = 1   # How many correction iterations at inference?
 
     config.test_adapt = False 
@@ -104,7 +103,6 @@ def print_useful_configs(config):
     print('Tasks: {}'.format(config.tasks))
     print(' --- CNet: ---')
     print('Use CNet: {}'.format(config.use_cnet))
-    print('Use FF: {}'.format(config.use_FF))
     print('Corr Steps: {}'.format(config.corr_steps))
     print('Test Adapt: {}'.format(config.test_adapt))
     print('Test Adapt LR: {}'.format(config.test_adapt_lr))
@@ -310,10 +308,7 @@ def eval_gt(m, cnet, cfg, gt_eval_dataset, heatmap_to_coord, test_vertice=False,
             backbone_pred = output.pred_xyz_jts_17
             backbone_pred = backbone_pred.reshape(-1, 17, 3)
 
-            if config.use_FF:
-                poses_2d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)[:,:,:2]    # TEMP: using labels for 2D
-                cnet_in = (poses_2d, backbone_pred)
-            elif config.test_adapt:
+            if config.test_adapt:
                 for i in range(config.adapt_steps):
                     # Setup Optimizer
                     cnet.load_cnets(print_str=False)   # reset to trained cnet

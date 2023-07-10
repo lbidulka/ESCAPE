@@ -24,8 +24,6 @@ class adapt_net():
 
         # Paths
         self.config.ckpt_name = self.config.hybrIK_version + '_cnet_all.pth'
-        if config.use_FF:
-            self.config.ckpt_name = self.config.ckpt_name[:-4] + '_FF' + self.config.ckpt_name[-4:]
 
         # Kpt definition
         # self.distal_kpts = target_kpts # [3, 6, 13, 16,]  # L_Ankle, R_Ankle, L_Wrist, R_Wrist
@@ -37,11 +35,8 @@ class adapt_net():
         self.in_kpts.sort()
 
         # Nets
-        # self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,
-        #                           use_FF=config.use_FF, num_p_stages=1, p_linear_size=512,
-        #                           ).to(self.device)
-        self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5,
-                                  use_FF=config.use_FF, num_p_stages=1, p_linear_size=512,
+        # self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,).to(self.device)
+        self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5, 
                                   num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.distal_kpts)).to(self.device)
         
         # Training
@@ -91,27 +86,8 @@ class adapt_net():
                 corr_pred[:, self.distal_kpts, dim] = pred_errs[:, self.distal_kpts, dim]
         return corr_pred
 
-    def _corr_FF(self, input):
-        '''
-        Correct the backbone predictions, with 2D reproj FF
-        '''
-        poses_2d, backbone_pred = input
-
-        corr_pred = backbone_pred.detach().clone()
-        FF_errs = errors.loss_weighted_rep_no_scale(poses_2d, backbone_pred)
-        inp = torch.cat([FF_errs, torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)], 1)
-        pred_errs = self.cnet(inp) / self.config.err_scale
-        pred_errs = pred_errs.reshape(-1, 4, 3) # net output is 4x3 (4 distal joints, 3d) errors
-
-        # subtract from distal joints
-        corr_pred[:, self.distal_kpts, :] -= pred_errs
-        return corr_pred
-
     def __call__(self, input):
-        if self.config.use_FF:
-            return self._corr_FF(input)
-        else:
-            return self._corr(input)
+        return self._corr(input)
 
     def train(self,):
         # data_path = self.config.cnet_dataset_path + 'cnet_hybrik_train.npy'
@@ -145,13 +121,7 @@ class adapt_net():
             for batch_idx, data in enumerate(gt_trainloader):
                 backbone_pred = data[0][:, 0, :].to(self.device)
                 target_xyz_17 = data[0][:, 1, :].to(self.device)
-
-                if self.config.use_FF:
-                    FF_errs = errors.loss_weighted_rep_no_scale(target_xyz_17[:,:,:2], backbone_pred)
-                    inp = torch.cat([FF_errs, torch.flatten(backbone_pred, start_dim=1)], 1)
-                else:
-                    inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
-                
+                inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
                 out = self.cnet(inp)
                 loss = self._loss(backbone_pred, out, target_xyz_17)
                 loss.backward()
@@ -165,13 +135,7 @@ class adapt_net():
                 for batch_idx, data in enumerate(gt_valloader):
                     backbone_pred = data[0][:, 0, :].to(self.device)
                     target_xyz_17 = data[0][:, 1, :].to(self.device)
-                    
-                    if self.config.use_FF:
-                        FF_errs = errors.loss_weighted_rep_no_scale(target_xyz_17[:,:,:2], backbone_pred)
-                        inp = torch.cat([FF_errs, torch.flatten(backbone_pred, start_dim=1)], 1)
-                    else:
-                        inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
-
+                    inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
                     out = self.cnet(inp)
                     loss = self._loss(backbone_pred, out, target_xyz_17)
                     cnet_val_losses.append(loss.item())
@@ -180,23 +144,16 @@ class adapt_net():
             mean_val_loss = np.mean(cnet_val_losses)
             # print on some epochs
             print_ep = ep % self.config.ep_print_freq == 0
-            losses_str, best_val_str = '', ''
             if print_ep:
-                losses_str = f"EP {ep}:    t_loss: {mean_train_loss:.5f}    v_loss: {mean_val_loss:.5f}"
                 print(f"EP {ep}:    t_loss: {mean_train_loss:.5f}    v_loss: {mean_val_loss:.5f}")#, end='')
             
             if mean_val_loss < best_val_loss:
-                best_val_str = "    ---> best val loss so far, "
                 if not print_ep:
                     print(f"EP {ep}:    t_loss: {mean_train_loss:.5f}    v_loss: {mean_val_loss:.5f}", end='')
                 print("    ---> best val loss so far, ", end='')
                 self.save(self.config.cnet_ckpt_path + self.config.ckpt_name)
                 best_val_loss = mean_val_loss
                 best_val_ep = ep
-            # print()
-
-            # losses_str = f"EP {ep}:    t_loss: {mean_train_loss:.5f}    v_loss: {mean_val_loss:.5f}"
-            # best_val_str = "    ---> best val loss so far, " if mean_val_loss < best_val_loss else ""
 
         print(f"EP {ep}:    t_loss: {mean_train_loss:.5f}    v_loss: {mean_val_loss:.5f}")
         print("|| Best val loss: {:.5f} at ep: {} ||".format(best_val_loss, best_val_ep))
