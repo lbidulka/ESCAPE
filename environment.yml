@@ -10,8 +10,8 @@ dependencies:
   - blas=1.0=mkl
   - brotlipy=0.7.0=py38h27cfd23_1003
   - bzip2=1.0.8=h7b6447c_0
-  - ca-certificates=2023.05.30=h06a4308_0
-  - certifi=2023.5.7=py38h06a4308_0
+  - ca-certificates=2023.5.7=hbcca054_0
+  - certifi=2023.5.7=pyhd8ed1ab_0
   - cffi=1.15.1=py38h5eee18b_3
   - charset-normalizer=2.0.4=pyhd3eb1b0_0
   - cryptography=39.0.1=py38h9ce1e76_2
@@ -20,6 +20,7 @@ dependencies:
   - cython=0.29.35=py38h6a678d5_0
   - ffmpeg=4.3=hf484d3e_0
   - freetype=2.12.1=h4a9f257_0
+  - gh=2.25.1=ha8f183a_0
   - giflib=5.2.1=h5eee18b_3
   - gmp=6.2.1=h295c915_3
   - gnutls=3.6.15=he1e5248_0
@@ -55,7 +56,7 @@ dependencies:
   - ninja=1.10.2=h06a4308_5
   - ninja-base=1.10.2=hd09550d_5
   - openh264=2.1.1=h4ff587b_0
-  - openssl=3.0.9=h7f8727e_0
+  - openssl=3.1.1=hd590300_1
   - packaging=23.0=py38h06a4308_0
   - pillow=9.3.0=py38hace64e9_1
   - pip=23.1.2=py38h06a4308_0
