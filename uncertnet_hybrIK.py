@@ -48,10 +48,11 @@ def load_pretrained_hybrik(config, hybrik_cfg,):
 
     return hybrik_model
 
-def make_trainset(hybrik, gt_train_dataset_3dpw, config):
+def make_trainsets(hybrik, gt_train_datasets_3dpw, config):
     with torch.no_grad():
-        print('##### Creating CNET {} Trainset #####'.format(config.trainset))
-        create_cnet_dataset_w_HybrIK(hybrik, config, gt_train_dataset_3dpw, dataset=config.trainset, task='train',)
+        for gt_train_dataset_3dpw in gt_train_datasets_3dpw:
+            print('##### Creating CNET {} Trainset #####'.format(config.trainset))
+            create_cnet_dataset_w_HybrIK(hybrik, config, gt_train_dataset_3dpw, dataset=config.trainset, task='train',)
 
 def make_testset(hybrik, gt_test_dataset_3dpw, config):
     with torch.no_grad():
@@ -71,28 +72,32 @@ def test(hybrik, cnet, R_cnet, gt_test_dataset_3dpw, config):
         gt_tot_err = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
                              test_cnet=False, use_data_file=True)
 
-def get_dataset(hybrik_cfg, config):
-    # Datasets for HybrIK
-    if config.trainset == 'PW3D':
-        trainset = PW3D(
-            cfg=hybrik_cfg,
-            ann_file='3DPW_train_new_fresh.json',
-            train=False,
-            root='/media/ExtHDD/Mohsen_data/3DPW'
-        )
-    elif config.trainset == 'MPii':
-        trainset = mpii_dataset(
-            cfg=hybrik_cfg,
-            annot_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/mpii_cliffGT.npz',
-            image_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/',
-        )
-    elif config.trainset == 'HP3D':
-        trainset = HP3D(
-            cfg=hybrik_cfg,
-            ann_file='train_v2',   # dumb adjustment...
-            train=False,
-            root='/media/ExtHDD/luke_data/HP3D'
-        )
+def get_datasets(hybrik_cfg, config):
+    trainsets = []
+    for dataset in config.trainsets:
+        if dataset == 'PW3D':
+            trainset = PW3D(
+                cfg=hybrik_cfg,
+                ann_file='3DPW_train_new_fresh.json',
+                train=False,
+                root='/media/ExtHDD/Mohsen_data/3DPW'
+            )
+        elif dataset == 'MPii':
+            trainset = mpii_dataset(
+                cfg=hybrik_cfg,
+                annot_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/mpii_cliffGT.npz',
+                image_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/',
+            )
+        elif dataset == 'HP3D':
+            trainset = HP3D(
+                cfg=hybrik_cfg,
+                ann_file='train_v2',   # dumb adjustment...
+                train=False,
+                root='/media/ExtHDD/luke_data/HP3D'
+            )
+        else:
+            raise NotImplementedError
+        trainsets.append(trainset)
 
     if config.testset == 'PW3D':
         testset = PW3D(
@@ -101,10 +106,12 @@ def get_dataset(hybrik_cfg, config):
             train=False,
             root='/media/ExtHDD/Mohsen_data/3DPW'
         )
-    if config.testset == 'HP3D':
+    elif dataset == 'HP3D':
         raise NotImplementedError    # Need to extract the test img frames
-    
-    return trainset, testset
+    else:
+        raise NotImplementedError
+        
+    return trainsets, testset
 
 def main_worker(hybrik_cfg, hybrIK_model, config): 
     print(' USING HYBRIK VER: {}'.format(config.hybrIK_version))
@@ -117,14 +124,15 @@ def main_worker(hybrik_cfg, hybrIK_model, config):
         cnet = adapt_net(config, target_kpts=config.distal_kpts,)
         R_cnet = adapt_net(config, target_kpts=config.proximal_kpts, R=True,)
 
-    cnet_trainset, cnet_testset = get_dataset(hybrik_cfg, config)
+    cnet_trainsets, cnet_testset = get_datasets(hybrik_cfg, config)
 
     if 'make_trainset' in config.tasks:
-        make_trainset(hybrik, cnet_trainset, config)
+        make_trainsets(hybrik, cnet_trainsets, config)
     if 'make_testset' in config.tasks: 
         make_testset(hybrik, cnet_testset, config)
-    if 'train' in config.tasks:
+    if 'train_CNet' in config.tasks:
         cnet.train()
+    if 'train_RCNet' in config.tasks:
         R_cnet.train()
     if 'test' in config.tasks:
         test(hybrik, cnet, R_cnet, cnet_testset, config)

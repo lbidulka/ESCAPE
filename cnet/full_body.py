@@ -34,11 +34,8 @@ class adapt_net():
             self.config.ckpt_name += '_all.pth'
 
         # Kpt definition
-        # self.distal_kpts = target_kpts # [3, 6, 13, 16,]  # L_Ankle, R_Ankle, L_Wrist, R_Wrist
-        # self.exclude_in_kpts = [] #self.distal_kpts
-        # self.in_kpts = in_kpts #[val for val in range(17) if val not in self.exclude_in_kpts]
-        self.in_kpts = in_kpts # [0, 1, 2, 3]
-        self.distal_kpts = target_kpts # [3,]
+        self.in_kpts = in_kpts
+        self.distal_kpts = target_kpts
 
         self.in_kpts.sort()
 
@@ -96,10 +93,16 @@ class adapt_net():
         return self._corr(input)
 
     def train(self,):
-        if self.config.train_datalim is not None:
-            data_all = torch.from_numpy(np.load(self.config.cnet_trainset_path)).float()[:, :self.config.train_datalim]
-        else:
-            data_all = torch.from_numpy(np.load(self.config.cnet_trainset_path)).float()
+        data_all = []
+        for i, trainset_path in enumerate(self.config.cnet_trainset_paths):
+            if self.config.train_datalims[i] is not None:
+                data = torch.from_numpy(np.load(trainset_path)).float()
+                # get random subset of data
+                data = data[:, np.random.choice(data.shape[1], self.config.train_datalims[i], replace=False), :]
+            else:
+                data = torch.from_numpy(np.load(trainset_path)).float()
+            data_all.append(data)
+        data_all = torch.cat(data_all, dim=1)
 
         len_train = int(len(data_all[0]) * self.config.train_split)
         data_train, data_val = data_all[:, :len_train, :], data_all[:, len_train:, :]

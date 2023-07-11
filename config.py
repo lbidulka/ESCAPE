@@ -20,27 +20,30 @@ def get_config():
     # config.limbs = ['LA', 'RA']
     # config.limbs = ['LL', 'RL', 'LA', 'RA']
     
-    config.corr_steps = 5   # How many correction iterations at inference?
-    config.corr_step_size = 0.1 # for err pred, what fraction of CNet corr to do
+    config.corr_steps = 1   # How many correction iterations at inference?
+    config.corr_step_size = 1 # for err pred, what fraction of CNet corr to do
     config.test_adapt = False 
     config.test_adapt_lr = 1e-3
     config.adapt_steps = 5
 
-    config.train_datalim = None # None      For debugging cnet training
-    # config.test_eval_limit = 2_000 # 50_000    For debugging cnet testing
-
     # Tasks
-    # config.tasks = ['make_trainset', 'make_testset', 'train', 'test']
-    config.tasks = ['train', 'test'] # 'make_trainset' 'make_testset' 'train', 'test'
+    # config.tasks = ['make_trainset', 'make_testset', 'train', 'test'] # 'make_trainset' 'make_testset' 'train_CNet' 'train_RCNet' 'test'
     # config.tasks = ['make_trainset', 'train', 'test']
     # config.tasks = ['make_testset', 'test']
     # config.tasks = ['make_trainset']
-    config.tasks = ['test']
+    # config.tasks = ['train_CNet', 'train_RCNet', 'test']
+    config.tasks = ['train_CNet', 'test']
+    # config.tasks = ['test']
     # config.tasks = ['train']
 
     # Data
-    config.trainset = 'MPii' # 'MPii', 'HP3D', 'PW3D',
+    config.trainsets = ['HP3D', 'MPii'] # 'MPii', 'HP3D', 'PW3D',
+    config.trainsets.sort()
+    config.trainsets_str = '_'.join(config.trainsets)
     config.testset = 'PW3D' # 'HP3D', 'PW3D',
+
+    config.train_datalims = [50_000, None] # None      For debugging cnet training
+    # config.test_eval_limit = 2_000 # 50_000    For debugging cnet testing
 
     # HybrIK config
     config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
@@ -53,12 +56,16 @@ def get_config():
         config.ckpt = 'hybrik_hrnet48_wo3dpw.pth' 
 
     # cnet dataset
-    config.cnet_ckpt_path = '../../ckpts/hybrIK/w_{}/'.format(config.trainset)
+    config.cnet_ckpt_path = '../../ckpts/hybrIK/w_{}/'.format(config.trainsets_str)
     config.cnet_dataset_path = '/media/ExtHDD/luke_data/adapt_3d/' #3DPW
 
-    config.cnet_trainset_path = '{}{}/{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, 
-                                                                config.trainset,
-                                                                config.hybrIK_version,)
+    config.cnet_trainset_paths = ['{}{}/{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path,
+                                                                trainset,
+                                                                config.hybrIK_version,) 
+                                                                for trainset in config.trainsets]
+    # config.cnet_trainset_path = '{}{}/{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, 
+    #                                                             config.trainsets_str,
+    #                                                             config.hybrIK_version,)
     config.cnet_testset_path = '{}{}/{}_cnet_hybrik_test.npy'.format(config.cnet_dataset_path, 
                                                                 config.testset,
                                                                 config.hybrIK_version,)
@@ -79,13 +86,14 @@ def print_useful_configs(config):
     print(' --- CNet: ---')
     print('Use CNet: {}'.format(config.use_cnet))
     print('Corr Steps: {}'.format(config.corr_steps))
+    print('Corr Step Size: {}'.format(config.corr_step_size))
     print('Test Adapt: {}'.format(config.test_adapt))
     print('Test Adapt LR: {}'.format(config.test_adapt_lr))
     print('Adapt Steps: {}'.format(config.adapt_steps)) 
     print(' --- Data: ---')
-    print('Trainset: {}'.format(config.trainset))
+    print('Trainsets: {}'.format(config.trainsets))
     print('Testset: {}'.format(config.testset))
-    print('Trainset path: {}'.format(config.cnet_trainset_path))
+    print('Trainset paths: {}'.format(config.cnet_trainset_paths))
     print('Testset path: {}'.format(config.cnet_testset_path))
     print(' ----------------- \n') 
     return
