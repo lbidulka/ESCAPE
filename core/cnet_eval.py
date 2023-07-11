@@ -29,7 +29,9 @@ def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset,
     # Data/Setup
     if use_data_file:
         test_file = config.cnet_testset_path
-        test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
+        test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)#[:config.test_eval_limit]
+        # random subset 
+        test_data = test_data[np.random.choice(test_data.shape[0], config.test_eval_limit, replace=False), :]
         gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
     gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False, 
                                                  num_workers=16, drop_last=False, pin_memory=True)
@@ -115,9 +117,6 @@ def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset,
                 'xyz_17': pred_xyz_jts_17[i],
             }
         kpt_all_pred.update(kpt_pred)
-
-        # if it > config.test_eval_limit:
-        #     break
 
     eval_summary_json = gt_eval_dataset_for_scoring.evaluate_xyz_17(kpt_all_pred, os.path.join('exp', 'test_3d_kpt.json'))
     return eval_summary_json

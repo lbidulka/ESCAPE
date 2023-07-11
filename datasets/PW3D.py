@@ -435,8 +435,9 @@ class PW3D(data.Dataset):
 
     def evaluate_xyz_17(self, preds, result_dir):
         print('Evaluation start...')
-        assert len(self.db['img_id']) == len(preds)
-        sample_num = len(self.db['img_id'])
+        if len(self.db['img_id']) != len(preds):
+            print('WARNING: number of samples in db is not equal to number of samples in preds, doing partial evaluation on present samples only!')
+        sample_num = len(preds)
 
         pred_save = []
         error = np.zeros((sample_num, len(self.EVAL_JOINTS)))  # joint error
@@ -445,7 +446,7 @@ class PW3D(data.Dataset):
         error_y = np.zeros((sample_num, len(self.EVAL_JOINTS)))  # joint error
         error_z = np.zeros((sample_num, len(self.EVAL_JOINTS)))  # joint error
         # error for each sequence
-        for n in range(sample_num):
+        for i, n in enumerate(preds.keys()):
             image_id = self.db['img_id'][n]
             bbox = self.db['bbox'][n]
             gt_3d_root = self.db['root_cam'][n]
@@ -467,11 +468,11 @@ class PW3D(data.Dataset):
             pred_3d_kpt_pa = reconstruction_error(pred_3d_kpt.copy(), gt_3d_kpt.copy())
 
             # error calculate
-            error[n] = np.sqrt(np.sum((pred_3d_kpt - gt_3d_kpt)**2, 1))
-            error_pa[n] = np.sqrt(np.sum((pred_3d_kpt_pa - gt_3d_kpt)**2, 1))
-            error_x[n] = np.abs(pred_3d_kpt[:, 0] - gt_3d_kpt[:, 0])
-            error_y[n] = np.abs(pred_3d_kpt[:, 1] - gt_3d_kpt[:, 1])
-            error_z[n] = np.abs(pred_3d_kpt[:, 2] - gt_3d_kpt[:, 2])
+            error[i] = np.sqrt(np.sum((pred_3d_kpt - gt_3d_kpt)**2, 1))
+            error_pa[i] = np.sqrt(np.sum((pred_3d_kpt_pa - gt_3d_kpt)**2, 1))
+            error_x[i] = np.abs(pred_3d_kpt[:, 0] - gt_3d_kpt[:, 0])
+            error_y[i] = np.abs(pred_3d_kpt[:, 1] - gt_3d_kpt[:, 1])
+            error_z[i] = np.abs(pred_3d_kpt[:, 2] - gt_3d_kpt[:, 2])
             img_name = self.db['img_path'][n]
 
             # prediction save

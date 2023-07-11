@@ -33,7 +33,7 @@ def get_config():
     # config.tasks = ['make_trainset']
     # config.tasks = ['train_CNet', 'train_RCNet', 'test']
     config.tasks = ['train_CNet', 'test']
-    # config.tasks = ['test']
+    config.tasks = ['test']
     # config.tasks = ['train']
 
     # Data
@@ -43,7 +43,7 @@ def get_config():
     config.testset = 'PW3D' # 'HP3D', 'PW3D',
 
     config.train_datalims = [50_000, None] # None      For debugging cnet training
-    # config.test_eval_limit = 2_000 # 50_000    For debugging cnet testing
+    config.test_eval_limit = 5_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
 
     # HybrIK config
     config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
