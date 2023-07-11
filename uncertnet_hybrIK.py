@@ -2,11 +2,6 @@
 import os
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-import copy
-
-import numpy as np
-import torch
 
 # path_root = Path(__file__)#.parents[3]
 # sys.path.append(str(path_root))
@@ -14,19 +9,17 @@ import torch
 
 # print("\n", os.getcwd(), "\n", sys.path, "\n")
 
-from hybrik.models import builder
-from hybrik.utils.config import update_config
+import numpy as np
+import torch
 from torchvision import transforms as T
-from tqdm import tqdm
 det_transform = T.Compose([T.ToTensor()])
 
-import pickle as pk
-from hybrik.datasets import HP3D, PW3D, H36mSMPL
-from hybrik.utils.transforms import get_func_heatmap_to_coord
+from hybrik.models import builder
+from hybrik.utils.config import update_config
 
-
-from utils import errors
-from datasets.mpii import mpii_dataset
+from datasets.MPII import MPII
+from datasets.PW3D import PW3D
+from datasets.HP3D import HP3D
 from cnet.multi_distal import multi_distal
 from cnet.full_body import adapt_net
 from core.cnet_data import create_cnet_dataset_w_HybrIK
@@ -64,13 +57,24 @@ def test(hybrik, cnet, R_cnet, gt_test_dataset_3dpw, config):
     R_cnet.load_cnets()
     hybrik = hybrik.to(config.device)
 
-    print('\n##### 3DPW TESTSET ERRS #####\n')
-    tot_corr_MPJPE = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
+    print('\n##### 3DPW TESTSET ERRS #####')
+    print('\n--- Corrected: --- ')
+    corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
                                 test_cnet=True, use_data_file=True)
+    print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}\n'.format(corr_eval_summary['PA-MPJPE'], 
+                                                                                          corr_eval_summary['MPJPE'], 
+                                                                                          corr_eval_summary['x'], 
+                                                                                          corr_eval_summary['y'], 
+                                                                                          corr_eval_summary['z']))
     print('\n--- Vanilla: --- ')
     with torch.no_grad():
-        gt_tot_err = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
+        van_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
                              test_cnet=False, use_data_file=True)
+    print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}\n'.format(van_eval_summary['PA-MPJPE'], 
+                                                                                          van_eval_summary['MPJPE'], 
+                                                                                          van_eval_summary['x'], 
+                                                                                          van_eval_summary['y'], 
+                                                                                          van_eval_summary['z']))
 
 def get_datasets(hybrik_cfg, config):
     trainsets = []
@@ -83,7 +87,7 @@ def get_datasets(hybrik_cfg, config):
                 root='/media/ExtHDD/Mohsen_data/3DPW'
             )
         elif dataset == 'MPii':
-            trainset = mpii_dataset(
+            trainset = MPII(
                 cfg=hybrik_cfg,
                 annot_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/mpii_cliffGT.npz',
                 image_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/',

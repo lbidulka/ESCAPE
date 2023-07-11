@@ -9,7 +9,7 @@ from hybrik.utils.presets import SimpleTransform3DSMPLCam
 
 from utils.convert_pose_2kps import get_smpl_l2ws
 
-class mpii_dataset(data.Dataset):
+class MPII(data.Dataset):
     def __init__(self, 
                  cfg,
                  annot_dir, 

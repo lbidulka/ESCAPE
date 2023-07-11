@@ -7,7 +7,6 @@ import os
 
 import utils.errors as errors
 
-
 def cnet_rcnet_self_consistency(config, backbone_pred, Rcnet_pred, err_scale=1000):
     '''
     CNet self consistency loss for TTT
@@ -120,5 +119,5 @@ def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset,
         # if it > config.test_eval_limit:
         #     break
 
-    tot_err_17 = gt_eval_dataset_for_scoring.evaluate_xyz_17(kpt_all_pred, os.path.join('exp', 'test_3d_kpt.json'))
-    return tot_err_17
+    eval_summary_json = gt_eval_dataset_for_scoring.evaluate_xyz_17(kpt_all_pred, os.path.join('exp', 'test_3d_kpt.json'))
+    return eval_summary_json
