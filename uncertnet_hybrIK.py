@@ -58,19 +58,31 @@ def test(hybrik, cnet, R_cnet, gt_test_dataset_3dpw, config):
     hybrik = hybrik.to(config.device)
 
     print('\n##### 3DPW TESTSET ERRS #####')
-    print('\n--- Corrected: --- ')
+    if config.test_adapt:
+        print('--- CNet w/TTT: --- ')
+        corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
+                                test_cnet=True, test_adapt=True, use_data_file=True)
+        print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'], 
+                                                                                            corr_eval_summary['MPJPE'], 
+                                                                                            corr_eval_summary['x'], 
+                                                                                            corr_eval_summary['y'], 
+                                                                                            corr_eval_summary['z']))    
+
+    print('--- Just CNet: --- ')
+    cnet.load_cnets()
+    R_cnet.load_cnets()
     corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
                                 test_cnet=True, use_data_file=True)
-    print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}\n'.format(corr_eval_summary['PA-MPJPE'], 
+    print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'], 
                                                                                           corr_eval_summary['MPJPE'], 
                                                                                           corr_eval_summary['x'], 
                                                                                           corr_eval_summary['y'], 
                                                                                           corr_eval_summary['z']))
-    print('\n--- Vanilla: --- ')
+    print('--- Vanilla: --- ')
     with torch.no_grad():
         van_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
                              test_cnet=False, use_data_file=True)
-    print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}\n'.format(van_eval_summary['PA-MPJPE'], 
+    print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(van_eval_summary['PA-MPJPE'], 
                                                                                           van_eval_summary['MPJPE'], 
                                                                                           van_eval_summary['x'], 
                                                                                           van_eval_summary['y'], 
@@ -117,16 +129,18 @@ def get_datasets(hybrik_cfg, config):
         
     return trainsets, testset
 
-def main_worker(hybrik_cfg, hybrIK_model, config): 
-    print(' USING HYBRIK VER: {}'.format(config.hybrIK_version))
-    hybrik = hybrIK_model.to('cpu')
+def main_worker(hybrik_cfg, config): 
+    print('USING HYBRIK VER: {}'.format(config.hybrIK_version))
+    hybrik_model = load_pretrained_hybrik(config, hybrik_cfg)
+    hybrik = hybrik_model.to('cpu')
 
     if config.use_multi_distal:
         cnet = multi_distal(config)
         # TODO: MULTI-DISTAL R-CNET
     else:
         cnet = adapt_net(config, target_kpts=config.distal_kpts,)
-        R_cnet = adapt_net(config, target_kpts=config.proximal_kpts, R=True,)
+        R_cnet = adapt_net(config, target_kpts=config.proximal_kpts, R=True,
+                           in_kpts=[kpt for kpt in range(17) if kpt not in config.proximal_kpts])
 
     cnet_trainsets, cnet_testset = get_datasets(hybrik_cfg, config)
 
@@ -144,6 +158,5 @@ def main_worker(hybrik_cfg, hybrIK_model, config):
 if __name__ == "__main__":    
     config = get_config()
     hybrik_cfg = update_config(config.hybrik_cfg) 
-    hybrik_model = load_pretrained_hybrik(config, hybrik_cfg)
-    main_worker(hybrik_cfg, hybrik_model, config)
+    main_worker(hybrik_cfg, config)
 

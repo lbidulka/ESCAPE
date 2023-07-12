@@ -70,16 +70,14 @@ class adapt_net():
         loss = self.criterion(cnet_out, cnet_target*self.config.err_scale)
         return loss
 
-    def _corr(self, input):
-        backbone_pred = input
+    def _corr(self, backbone_pred):
         '''
         Correct the backbone predictions, no Feedback
         '''
-        corr_pred = backbone_pred.detach().clone()
         inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
         pred_errs = self.cnet(inp) / self.config.err_scale
         pred_errs = pred_errs.reshape(-1, len(self.distal_kpts), 3) # net output is 4x3 (4 distal joints, 3d) errors
-
+        corr_pred = backbone_pred.detach().clone()
         if self.pred_errs:
             for dim in self.corr_dims:
                 corr_pred[:, self.distal_kpts, dim] -= self.config.corr_step_size*pred_errs[..., dim]
@@ -89,8 +87,11 @@ class adapt_net():
                 corr_pred[:, self.distal_kpts, dim] = pred_errs[:, self.distal_kpts, dim]
         return corr_pred
 
-    def __call__(self, input):
-        return self._corr(input)
+    def __call__(self, cnet_in):
+        for i in range(self.config.corr_steps):
+            corr_pred = self._corr(cnet_in)
+            cnet_in = corr_pred
+        return corr_pred
 
     def train(self,):
         data_all = []
@@ -174,7 +175,7 @@ class adapt_net():
         '''
         load_path = self.config.cnet_ckpt_path + self.config.ckpt_name
         if print_str: 
-            print("\nLoading {} from: {}".format('R-CNet' if self.R else 'CNet', load_path))
+            print("Loading {} from: {}".format('R-CNet' if self.R else 'CNet', load_path))
         all_net_ckpt_dict = torch.load(load_path)
         self.cnet.load_state_dict(all_net_ckpt_dict) 
     

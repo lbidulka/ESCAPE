@@ -4,7 +4,7 @@ from tqdm import tqdm
 import numpy as np
 
 
-def unpack_data(data, dataset, target_key, config):
+def unpack_train_data(data, dataset, target_key, config):
     '''
     Unpack sample from dataloader & move to GPU
     '''
@@ -84,7 +84,7 @@ def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
     target_xyzs = []
     img_idss = []
     for i, data in enumerate(tqdm(gt_loader, dynamic_ncols=True)):
-        inps, labels, img_ids, bboxes = unpack_data(data, dataset, target_key, opt)
+        inps, labels, img_ids, bboxes = unpack_train_data(data, dataset, target_key, opt)
 
         m_output = m(inps, flip_test=opt.flip_test, bboxes=bboxes.to(config.device), img_center=labels['img_center'])
         backbone_pred = m_output.pred_xyz_jts_17
