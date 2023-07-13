@@ -13,7 +13,7 @@ def get_config():
     np.random.seed(config.seed) # For test set random slice
 
     # Main Settings
-    config.print_config = False
+    config.print_config = True
     config.use_cnet = True
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
 
@@ -29,8 +29,9 @@ def get_config():
     config.corr_steps = 1   # How many correction iterations at inference?
     config.corr_step_size = 0.5 # for err pred, what fraction of CNet corr to do
     config.test_adapt = True 
+    config.TTT_loss = 'reproj_2d' # 'reproj_2d' 'consistency'
     config.test_adapt_lr = 1e-2 
-    config.adapt_steps = 1
+    config.adapt_steps = 5
 
     # Tasks
     # config.tasks = ['make_trainset', 'make_testset', 'train', 'test'] # 'make_trainset' 'make_testset' 'train_CNet' 'train_RCNet' 'test'

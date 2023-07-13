@@ -40,7 +40,6 @@ class adapt_net():
         self.in_kpts.sort()
 
         # Nets
-        # self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5,).to(self.device)
         self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5, 
                                   num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.distal_kpts)).to(self.device)
         
@@ -49,14 +48,14 @@ class adapt_net():
         self.config.err_scale = 1000    # 100
 
         self.config.lr = 1e-2
+        self.config.cnet_train_epochs = 50  # 200
         # self.config.weight_decay = 1e-3
         self.config.batch_size = 1024
-        self.config.cnet_train_epochs = 50  # 200
+
         self.config.ep_print_freq = 5
 
         self.optimizer = torch.optim.Adam(self.cnet.parameters(), lr=self.config.lr)#, weight_decay=self.config.weight_decay)
         self.criterion = nn.MSELoss()
-        # self.criterion = nn.L1Loss()
 
     def _loss(self, backbone_pred, cnet_out, target_xyz_17):
         '''

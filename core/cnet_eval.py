@@ -7,16 +7,19 @@ import os
 
 import utils.errors as errors
 
-def cnet_rcnet_self_consistency(config, backbone_pred, Rcnet_pred, err_scale=1000):
+def cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d, err_scale=1000):
     '''
-    CNet self consistency loss for TTT
+    CNet loss for TTT, based on config
 
-    computes L2(proximal kpts predicted by Rcnet from cnet preds, orignal backbone preds)
+    consistency: computes L2(proximal kpts predicted by Rcnet from cnet preds, orignal backbone preds)
     '''
 
-    # loss = nn.MSELoss(backbone_pred[:, config.proximal_kpts, :], Rcnet_pred[:, config.proximal_kpts, :])
-    loss = torch.square((backbone_pred[:,config.proximal_kpts,:] - Rcnet_pred[:,config.proximal_kpts,:])*err_scale).mean()
-
+    if config.TTT_loss == 'reproj_2d':
+        loss = errors.loss_weighted_rep_no_scale(poses_2d, corrected_pred, sum_kpts=True).sum()
+    elif config.TTT_loss == 'consistency':
+        loss = torch.square((backbone_pred[:,config.proximal_kpts,:] - Rcnet_pred[:,config.proximal_kpts,:])*err_scale).mean()
+    else:
+        raise NotImplementedError
     return loss
 
 def unpack_test_data(data, m, use_data_file, flip_test, config):
@@ -87,10 +90,11 @@ def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset,
                 cnet.cnet.apply(set_bn_eval)
                 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, cnet.cnet.parameters()),
                                                 lr=config.test_adapt_lr)
+                poses_2d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)[:,:,:2]    # TEMP: using labels for 2D
                 cnet_in = backbone_pred.detach().clone()
                 for i in range(config.adapt_steps):
                     corrected_pred = cnet(cnet_in)
-                    loss = cnet_rcnet_self_consistency(config, backbone_pred, R_cnet(corrected_pred))
+                    loss = cnet_TTT_loss(config, backbone_pred, R_cnet(corrected_pred), corrected_pred, poses_2d)
                     loss.backward()
                     optimizer.step()
                     optimizer.zero_grad()

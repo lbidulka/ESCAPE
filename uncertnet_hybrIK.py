@@ -60,15 +60,14 @@ def test(hybrik, cnet, R_cnet, gt_test_dataset_3dpw, config):
     print('\n##### 3DPW TESTSET ERRS #####')
     if config.test_adapt:
         print('--- CNet w/TTT: --- ')
-        corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
+        TTT_corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
                                 test_cnet=True, test_adapt=True, use_data_file=True)
-        print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'], 
-                                                                                            corr_eval_summary['MPJPE'], 
-                                                                                            corr_eval_summary['x'], 
-                                                                                            corr_eval_summary['y'], 
-                                                                                            corr_eval_summary['z']))    
-
-    print('--- Just CNet: --- ')
+        print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(TTT_corr_eval_summary['PA-MPJPE'], 
+                                                                                            TTT_corr_eval_summary['MPJPE'], 
+                                                                                            TTT_corr_eval_summary['x'], 
+                                                                                            TTT_corr_eval_summary['y'], 
+                                                                                            TTT_corr_eval_summary['z']))    
+    print('--- CNet Only: --- ')
     cnet.load_cnets()
     R_cnet.load_cnets()
     corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
@@ -87,6 +86,17 @@ def test(hybrik, cnet, R_cnet, gt_test_dataset_3dpw, config):
                                                                                           van_eval_summary['x'], 
                                                                                           van_eval_summary['y'], 
                                                                                           van_eval_summary['z']))
+    print('--- Corr. - Van.: --- ')
+    print('CN w/TTT: XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(TTT_corr_eval_summary['PA-MPJPE'] - van_eval_summary['PA-MPJPE'],
+                                                                                              TTT_corr_eval_summary['MPJPE'] - van_eval_summary['MPJPE'],
+                                                                                              TTT_corr_eval_summary['x'] - van_eval_summary['x'],
+                                                                                              TTT_corr_eval_summary['y'] - van_eval_summary['y'],
+                                                                                              TTT_corr_eval_summary['z'] - van_eval_summary['z'],))
+    print('CN alone: XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'] - van_eval_summary['PA-MPJPE'],
+                                                                                              corr_eval_summary['MPJPE'] - van_eval_summary['MPJPE'],
+                                                                                              corr_eval_summary['x'] - van_eval_summary['x'],
+                                                                                              corr_eval_summary['y'] - van_eval_summary['y'],
+                                                                                              corr_eval_summary['z'] - van_eval_summary['z'],))
 
 def get_datasets(hybrik_cfg, config):
     trainsets = []
