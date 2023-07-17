@@ -26,32 +26,35 @@ def get_config():
     # config.limbs = ['LA', 'RA']
     # config.limbs = ['LL', 'RL', 'LA', 'RA']
     
-    config.corr_steps = 1   # How many correction iterations at inference?
-    config.corr_step_size = 0.5 # for err pred, what fraction of CNet corr to do
-    config.test_adapt = True 
+    config.split_corr_dim_trick = True  # correct z with trained CNet, correct x/y with tuned CNet
+
+    config.corr_steps = 7   # How many correction iterations at inference?
+    config.corr_step_size = 0.1 # for err pred, what fraction of CNet corr to do
+    config.test_adapt = False 
     config.TTT_loss = 'reproj_2d' # 'reproj_2d' 'consistency'
     config.test_adapt_lr = 1e-2 
-    config.adapt_steps = 5
+    config.adapt_steps = 10
 
     # Tasks
     # config.tasks = ['make_trainset', 'make_testset', 'train', 'test'] # 'make_trainset' 'make_testset' 'train_CNet' 'train_RCNet' 'test'
     # config.tasks = ['make_trainset', 'train', 'test']
     # config.tasks = ['make_testset', 'test']
     # config.tasks = ['make_trainset']
-    config.tasks = ['train_CNet', 'train_RCNet', 'test']
-    # config.tasks = ['train_CNet', 'test']
-    config.tasks = ['train_RCNet', 'test']
+    # config.tasks = ['train_CNet', 'train_RCNet', 'test']
+    config.tasks = ['train_CNet', 'test']
+    # config.tasks = ['train_RCNet', 'test']
     config.tasks = ['test']
     # config.tasks = ['train']
 
     # Data
     config.trainsets = ['HP3D', 'MPii'] # 'MPii', 'HP3D', 'PW3D',
+    # config.trainsets = ['MPii'] # 'MPii', 'HP3D', 'PW3D',
     config.trainsets.sort()
     config.trainsets_str = '_'.join(config.trainsets)
     config.testset = 'PW3D' # 'HP3D', 'PW3D',
 
     config.train_datalims = [50_000, None] # None      For debugging cnet training
-    config.test_eval_limit = 1000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
+    config.test_eval_limit = 1_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
     if config.testset == 'PW3D':
         PW3D_testlen = 35_515
         config.test_eval_subset = np.random.choice(PW3D_testlen, min(config.test_eval_limit, PW3D_testlen), replace=False)
@@ -100,6 +103,8 @@ def print_useful_configs(config):
     print('Test Adapt: {}'.format(config.test_adapt))
     print('Test Adapt LR: {}'.format(config.test_adapt_lr))
     print('Adapt Steps: {}'.format(config.adapt_steps)) 
+    print('TTT Loss: {}'.format(config.TTT_loss))
+    print('Split Corr Dim Trick: {}'.format(config.split_corr_dim_trick))
     print(' --- Data: ---')
     print('Trainsets: {}'.format(config.trainsets))
     print('Testset: {}'.format(config.testset))

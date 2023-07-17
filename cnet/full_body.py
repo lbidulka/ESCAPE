@@ -98,7 +98,7 @@ class adapt_net():
             if self.config.train_datalims[i] is not None:
                 data = torch.from_numpy(np.load(trainset_path)).float()
                 # get random subset of data
-                data = data[:, np.random.choice(data.shape[1], self.config.train_datalims[i], replace=False), :]
+                data = data[:, np.random.choice(data.shape[1], min(self.config.train_datalims[i], data.shape[1]), replace=False), :]
             else:
                 data = torch.from_numpy(np.load(trainset_path)).float()
             data_all.append(data)

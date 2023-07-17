@@ -11,6 +11,41 @@ skeleton_3D_kpt_idxs = {
         'RHip': 4, 'RKnee': 5, 'RAnkle': 6,
 }
 
+def convert_kpts_coco_h36m(kpts_coco):
+    H36M_KEYPOINTS = [
+        'pelvis_extra',
+        'left_hip_extra',
+        'left_knee',
+        'left_ankle',
+        'right_hip_extra',  # 4
+        'right_knee',
+        'right_ankle',
+        'spine_extra',  # 7
+        'neck_extra',
+        'head_extra',
+        'headtop',  # 10
+        'left_shoulder',
+        'left_elbow',
+        'left_wrist',
+        'right_shoulder',   # 14
+        'right_elbow',
+        'right_wrist',
+    ]
+    keypoints_new = np.zeros((17, kpts_coco.shape[1]), dtype=kpts_coco.dtype)
+    # pelvis (root) is in the middle of l_hip and r_hip
+    keypoints_new[0] = (kpts_coco[11] + kpts_coco[12]) / 2
+    # thorax is in the middle of l_shoulder and r_shoulder
+    keypoints_new[8] = (kpts_coco[5] + kpts_coco[6]) / 2
+    # spine is in the middle of thorax and pelvis
+    keypoints_new[7] = (keypoints_new[0] + keypoints_new[8]) / 2
+    # in COCO, head is in the middle of l_eye and r_eye
+    # in PoseTrack18, head is in the middle of head_bottom and head_top
+    keypoints_new[10] = (kpts_coco[1] + kpts_coco[2]) / 2
+    # rearrange other keypoints
+    keypoints_new[[1, 2, 3, 4, 5, 6, 9, 11, 12, 13, 14, 15, 16]] = \
+        kpts_coco[[11, 13, 15, 12, 14, 16, 0, 5, 7, 9, 6, 8, 10]]
+    return keypoints_new
+
 def zero_pose_orient(poses, flip=False):
     '''
     Align the body axes with the world axes.
