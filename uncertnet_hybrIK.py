@@ -41,27 +41,30 @@ def load_pretrained_hybrik(config, hybrik_cfg,):
 
     return hybrik_model
 
-def make_trainsets(hybrik, gt_train_datasets_3dpw, config):
+def make_trainsets(hybrik, trainsets, config):
     with torch.no_grad():
-        for gt_train_dataset_3dpw in gt_train_datasets_3dpw:
-            print('##### Creating CNET {} Trainset #####'.format(config.trainset))
-            create_cnet_dataset_w_HybrIK(hybrik, config, gt_train_dataset_3dpw, dataset=config.trainset, task='train',)
+        for i, trainset in enumerate(trainsets):
+            print('##### Creating CNET {} Trainset #####'.format(config.trainsets[i]))
+            create_cnet_dataset_w_HybrIK(hybrik, config, trainset, 
+                                         dataset=config.trainsets[i], task='train',)
 
-def make_testset(hybrik, gt_test_dataset_3dpw, config):
+def make_testset(hybrik, testset, config):
     with torch.no_grad():
         print('##### Creating CNET {} Testset #####'.format(config.testset))
-        create_cnet_dataset_w_HybrIK(hybrik, config, gt_test_dataset_3dpw, dataset=config.trainset, task='test',)
+        create_cnet_dataset_w_HybrIK(hybrik, config, testset, 
+                                     dataset=config.trainset, task='test',)
 
-def test(hybrik, cnet, R_cnet, gt_test_dataset_3dpw, config):
+def test(backbone, cnet, R_cnet, testset, config):
     cnet.load_cnets()
-    if config.test_adapt: R_cnet.load_cnets()
-    hybrik = hybrik.to(config.device)
+    if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
+    if backbone is not None: backbone.to(config.device)
 
     print('\n##### 3DPW TESTSET ERRS #####')
     if config.test_adapt:
         print('--- CNet w/TTT: --- ')
-        TTT_corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
-                                test_cnet=True, test_adapt=True, use_data_file=True)
+        TTT_eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
+                                test_cnet=True, test_adapt=True, use_data_file=config.TTT_from_file)
+        TTT_corr_eval_summary = TTT_eval_summary['corrected']
         print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(TTT_corr_eval_summary['PA-MPJPE'], 
                                                                                             TTT_corr_eval_summary['MPJPE'], 
                                                                                             TTT_corr_eval_summary['x'], 
@@ -69,18 +72,17 @@ def test(hybrik, cnet, R_cnet, gt_test_dataset_3dpw, config):
                                                                                             TTT_corr_eval_summary['z']))    
     print('--- CNet Only: --- ')
     cnet.load_cnets()
-    if config.test_adapt: R_cnet.load_cnets()
-    corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
+    if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
+    eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
                                 test_cnet=True, use_data_file=True)
+    corr_eval_summary = eval_summary['corrected']
+    van_eval_summary = eval_summary['backbone']
     print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'], 
                                                                                           corr_eval_summary['MPJPE'], 
                                                                                           corr_eval_summary['x'], 
                                                                                           corr_eval_summary['y'], 
                                                                                           corr_eval_summary['z']))
     print('--- Vanilla: --- ')
-    with torch.no_grad():
-        van_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, gt_test_dataset_3dpw, 
-                             test_cnet=False, use_data_file=True)
     print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(van_eval_summary['PA-MPJPE'], 
                                                                                           van_eval_summary['MPJPE'], 
                                                                                           van_eval_summary['x'], 
@@ -99,75 +101,114 @@ def test(hybrik, cnet, R_cnet, gt_test_dataset_3dpw, config):
                                                                                               corr_eval_summary['y'] - van_eval_summary['y'],
                                                                                               corr_eval_summary['z'] - van_eval_summary['z'],))
 
-def get_datasets(hybrik_cfg, config):
+def make_mmlab_test(hybrik, cnet, R_cnet, config):
+    cnet.load_cnets()
+    if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
+    hybrik = hybrik.to(config.device)
+    
+    print('\n##### CNET SAMPLE GEN FOR mmlab 3DPW  #####')
+    if config.test_adapt:
+        print('--- CNet w/TTT: --- ')
+        TTT_corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config, 
+                                test_cnet=True, test_adapt=True, use_data_file=config.TTT_from_file)
+    print('--- CNet Only: --- ')
+    cnet.load_cnets()
+    if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
+    corr_eval_summary = eval_gt(hybrik, cnet, R_cnet, config,
+                                test_cnet=True, use_data_file=True, mmlab_out=True)
+
+def get_datasets(backbone_cfg, config):
     trainsets = []
-    for dataset in config.trainsets:
-        if dataset == 'PW3D':
-            trainset = PW3D(
-                cfg=hybrik_cfg,
-                ann_file='3DPW_train_new_fresh.json',
+    if config.backbone == 'spin':
+        return trainsets, None
+    elif any([(task in config.tasks) for task in 
+            ['make_trainset', 'train_RCNet', 'train_CNet']]):
+        for dataset in config.trainsets:
+            if dataset == 'PW3D':
+                trainset = PW3D(
+                    cfg=backbone_cfg,
+                    ann_file='3DPW_train_new_fresh.json',
+                    train=False,
+                    root='/media/ExtHDD/Mohsen_data/3DPW')
+            elif dataset == 'MPii':
+                trainset = MPII(
+                    cfg=backbone_cfg,
+                    annot_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/mpii_cliffGT.npz',
+                    image_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/',)
+            elif dataset == 'HP3D':
+                trainset = HP3D(
+                    cfg=backbone_cfg,
+                    ann_file='train_v2',   # dumb adjustment...
+                    train=False,
+                    root='/media/ExtHDD/luke_data/HP3D')
+            else:
+                raise NotImplementedError
+            trainsets.append(trainset)
+    if 'test' in config.tasks:
+        if config.testset == 'PW3D':
+            testset = PW3D(
+                cfg=backbone_cfg,
+                ann_file='3DPW_test_new_fresh.json',
                 train=False,
-                root='/media/ExtHDD/Mohsen_data/3DPW'
-            )
-        elif dataset == 'MPii':
-            trainset = MPII(
-                cfg=hybrik_cfg,
-                annot_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/mpii_cliffGT.npz',
-                image_dir='/media/ExtHDD/Mohsen_data/mpii_human_pose/',
-            )
+                root='/media/ExtHDD/Mohsen_data/3DPW')
         elif dataset == 'HP3D':
-            trainset = HP3D(
-                cfg=hybrik_cfg,
-                ann_file='train_v2',   # dumb adjustment...
-                train=False,
-                root='/media/ExtHDD/luke_data/HP3D'
-            )
+            raise NotImplementedError    # Need to extract the test img frames
         else:
             raise NotImplementedError
-        trainsets.append(trainset)
-
-    if config.testset == 'PW3D':
-        testset = PW3D(
-            cfg=hybrik_cfg,
-            ann_file='3DPW_test_new_fresh.json',
-            train=False,
-            root='/media/ExtHDD/Mohsen_data/3DPW'
-        )
-    elif dataset == 'HP3D':
-        raise NotImplementedError    # Need to extract the test img frames
-    else:
-        raise NotImplementedError
-        
+    else: 
+        testset = None
     return trainsets, testset
 
-def main_worker(hybrik_cfg, config): 
-    print('USING HYBRIK VER: {}'.format(config.hybrIK_version))
-    hybrik_model = load_pretrained_hybrik(config, hybrik_cfg)
-    hybrik = hybrik_model.to('cpu')
+def load_backbone(config):
+    ''' Load the backbone 3D pose estimation model '''
+    if config.backbone == 'hybrik':
+        model_cfg = update_config(config.hybrik_cfg) 
+        print('USING HYBRIK VER: {}'.format(config.hybrIK_version))
+        model = load_pretrained_hybrik(config, model_cfg)
+        model = model.to('cpu')
+    elif config.backbone == 'spin':
+        if (config.test_adapt and not config.TTT_from_file):
+            raise NotImplementedError
+        model = None
+        model_cfg = None
+    else:
+        raise NotImplementedError
+    return model, model_cfg
 
+def setup_adapt_nets(config):
+    ''' Define the adaptation networks CNet and RCNet '''
     if config.use_multi_distal:
         cnet = multi_distal(config)
-        # TODO: MULTI-DISTAL R-CNET
+        R_cnet = None # TODO: MULTI-DISTAL R-CNET
     else:
-        cnet = adapt_net(config, target_kpts=config.distal_kpts,)
-        R_cnet = adapt_net(config, target_kpts=config.proximal_kpts, R=True,
-                           in_kpts=[kpt for kpt in range(17) if kpt not in config.proximal_kpts])
+        cnet = adapt_net(config, target_kpts=config.cnet_targets,)
+        R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,  #config.proximal_kpts, 
+                           R=True,)
+                        #    in_kpts=[kpt for kpt in range(17) if kpt not in config.rcnet_targets])
+    return cnet, R_cnet
 
-    cnet_trainsets, cnet_testset = get_datasets(hybrik_cfg, config)
+def main_worker(config): 
+    backbone_model, backbone_cfg = load_backbone(config)    
+    cnet, R_cnet = setup_adapt_nets(config)    
+    cnet_trainsets, cnet_testset = get_datasets(backbone_cfg, config)
 
     if 'make_trainset' in config.tasks:
-        make_trainsets(hybrik, cnet_trainsets, config)
+        make_trainsets(backbone_model, cnet_trainsets, config)
     if 'make_testset' in config.tasks: 
-        make_testset(hybrik, cnet_testset, config)
+        make_testset(backbone_model, cnet_testset, config)
     if 'train_CNet' in config.tasks:
         cnet.train()
+    if 'make_RCNet_trainset' in config.tasks:
+        cnet.write_train_preds()
     if 'train_RCNet' in config.tasks:
         R_cnet.train()
     if 'test' in config.tasks:
-        test(hybrik, cnet, R_cnet, cnet_testset, config)
+        test(backbone_model, cnet, R_cnet, cnet_testset, config)
+    if 'make_mmlab_test' in config.tasks:
+        make_mmlab_test(backbone_model, cnet, R_cnet, config)
+    print("All Done!")
 
 if __name__ == "__main__":    
     config = get_config()
-    hybrik_cfg = update_config(config.hybrik_cfg) 
-    main_worker(hybrik_cfg, config)
+    main_worker(config)
 

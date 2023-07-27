@@ -165,6 +165,7 @@ class PW3D(data.Dataset):
 
         # transform ground truth into training label and apply data augmentation
         target = self.transformation(img, label)
+        target['img_path'] = str(img_path)
 
         img = target.pop('image')
         bbox = target.pop('bbox')
