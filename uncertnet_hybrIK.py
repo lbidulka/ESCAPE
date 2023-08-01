@@ -59,47 +59,51 @@ def test(backbone, cnet, R_cnet, testset, config):
     if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
     if backbone is not None: backbone.to(config.device)
 
-    print('\n##### 3DPW TESTSET ERRS #####')
-    if config.test_adapt:
-        print('--- CNet w/TTT: --- ')
-        TTT_eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
-                                test_cnet=True, test_adapt=True, use_data_file=config.TTT_from_file)
-        TTT_corr_eval_summary = TTT_eval_summary['corrected']
-        print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(TTT_corr_eval_summary['PA-MPJPE'], 
-                                                                                            TTT_corr_eval_summary['MPJPE'], 
-                                                                                            TTT_corr_eval_summary['x'], 
-                                                                                            TTT_corr_eval_summary['y'], 
-                                                                                            TTT_corr_eval_summary['z']))    
-    print('--- CNet Only: --- ')
-    cnet.load_cnets()
-    if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
-    eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
-                                test_cnet=True, use_data_file=True)
-    corr_eval_summary = eval_summary['corrected']
-    van_eval_summary = eval_summary['backbone']
-    print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'], 
-                                                                                          corr_eval_summary['MPJPE'], 
-                                                                                          corr_eval_summary['x'], 
-                                                                                          corr_eval_summary['y'], 
-                                                                                          corr_eval_summary['z']))
-    print('--- Vanilla: --- ')
-    print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(van_eval_summary['PA-MPJPE'], 
-                                                                                          van_eval_summary['MPJPE'], 
-                                                                                          van_eval_summary['x'], 
-                                                                                          van_eval_summary['y'], 
-                                                                                          van_eval_summary['z']))
-    print('--- Corr. - Van.: --- ')
-    if config.test_adapt:
-        print('CN w/TTT: XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(TTT_corr_eval_summary['PA-MPJPE'] - van_eval_summary['PA-MPJPE'],
-                                                                                                TTT_corr_eval_summary['MPJPE'] - van_eval_summary['MPJPE'],
-                                                                                                TTT_corr_eval_summary['x'] - van_eval_summary['x'],
-                                                                                                TTT_corr_eval_summary['y'] - van_eval_summary['y'],
-                                                                                                TTT_corr_eval_summary['z'] - van_eval_summary['z'],))
-    print('CN alone: XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'] - van_eval_summary['PA-MPJPE'],
-                                                                                              corr_eval_summary['MPJPE'] - van_eval_summary['MPJPE'],
-                                                                                              corr_eval_summary['x'] - van_eval_summary['x'],
-                                                                                              corr_eval_summary['y'] - van_eval_summary['y'],
-                                                                                              corr_eval_summary['z'] - van_eval_summary['z'],))
+    for test_path, test_scale, test_backbone in zip(config.cnet_testset_paths, 
+                                                    config.cnet_testset_scales, 
+                                                    config.cnet_testset_backbones):
+        print('\n##### {} TESTSET ERRS #####'.format(test_backbone))
+        if config.test_adapt:
+            print('--- CNet w/TTT: --- ')
+            TTT_eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
+                                       testset_path=test_path, backbone_scale=test_scale, 
+                                       test_cnet=True, test_adapt=True, use_data_file=config.TTT_from_file)
+            TTT_corr_eval_summary = TTT_eval_summary['corrected']
+            print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(TTT_corr_eval_summary['PA-MPJPE'], 
+                                                                                                TTT_corr_eval_summary['MPJPE'], 
+                                                                                                TTT_corr_eval_summary['x'], 
+                                                                                                TTT_corr_eval_summary['y'], 
+                                                                                                TTT_corr_eval_summary['z']))    
+        print('--- CNet Only: --- ')
+        cnet.load_cnets()
+        if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
+        eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
+                               testset_path=test_path, backbone_scale=test_scale, test_cnet=True, use_data_file=True)
+        corr_eval_summary = eval_summary['corrected']
+        van_eval_summary = eval_summary['backbone']
+        print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'], 
+                                                                                            corr_eval_summary['MPJPE'], 
+                                                                                            corr_eval_summary['x'], 
+                                                                                            corr_eval_summary['y'], 
+                                                                                            corr_eval_summary['z']))
+        print('--- Vanilla: --- ')
+        print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(van_eval_summary['PA-MPJPE'], 
+                                                                                            van_eval_summary['MPJPE'], 
+                                                                                            van_eval_summary['x'], 
+                                                                                            van_eval_summary['y'], 
+                                                                                            van_eval_summary['z']))
+        print('--- Corr. - Van.: --- ')
+        if config.test_adapt:
+            print('CN w/TTT: XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(TTT_corr_eval_summary['PA-MPJPE'] - van_eval_summary['PA-MPJPE'],
+                                                                                                    TTT_corr_eval_summary['MPJPE'] - van_eval_summary['MPJPE'],
+                                                                                                    TTT_corr_eval_summary['x'] - van_eval_summary['x'],
+                                                                                                    TTT_corr_eval_summary['y'] - van_eval_summary['y'],
+                                                                                                    TTT_corr_eval_summary['z'] - van_eval_summary['z'],))
+        print('CN alone: XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'] - van_eval_summary['PA-MPJPE'],
+                                                                                                corr_eval_summary['MPJPE'] - van_eval_summary['MPJPE'],
+                                                                                                corr_eval_summary['x'] - van_eval_summary['x'],
+                                                                                                corr_eval_summary['y'] - van_eval_summary['y'],
+                                                                                                corr_eval_summary['z'] - van_eval_summary['z'],))
 
 def make_mmlab_test(hybrik, cnet, R_cnet, config):
     cnet.load_cnets()
@@ -181,7 +185,8 @@ def setup_adapt_nets(config):
         cnet = multi_distal(config)
         R_cnet = None # TODO: MULTI-DISTAL R-CNET
     else:
-        cnet = adapt_net(config, target_kpts=config.cnet_targets,)
+        cnet = adapt_net(config, target_kpts=config.cnet_targets,
+                        in_kpts=[kpt for kpt in range(17) if kpt not in [9,10]])
         R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,  #config.proximal_kpts, 
                            R=True,)
                         #    in_kpts=[kpt for kpt in range(17) if kpt not in config.rcnet_targets])

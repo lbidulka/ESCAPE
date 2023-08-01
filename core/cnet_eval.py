@@ -98,6 +98,7 @@ def unpack_test_data(data, m, model_2d, use_data_file, config, flip_test=True):
     return output, labels, img_ids, poses_2d
 
 def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset=None, 
+            testset_path=None, backbone_scale=1.0,
             test_cnet=False, test_adapt=False, 
             use_data_file=False, mmlab_out=False):
     '''
@@ -106,19 +107,18 @@ def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset=None,
         batch_size = 1 # 1
     else:
         batch_size = 128
-    gt_eval_dataset_for_scoring = gt_eval_dataset
     # Data/Setup
     if use_data_file:
         if mmlab_out:
             test_file = config.mmlab_testset_path + '.npy'
         else:
-            test_file = config.cnet_testset_path
+            test_file = testset_path
         test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
         if config.test_adapt and (use_data_file == True):
             test_data = test_data[:config.test_eval_limit]
         else:
             test_data = test_data[config.test_eval_subset, :]
-        test_data *= config.backbone_scale
+        test_data *= backbone_scale
         gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
     gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False, 
                                                  num_workers=16, drop_last=False, pin_memory=True)

@@ -6,6 +6,7 @@ import copy
 
 from .residual import BaselineModel
 import utils.errors as errors
+from core.cnet_dataset import cnet_pose_dataset, hflip_keypoints
 
 class adapt_net():
     '''
@@ -23,7 +24,7 @@ class adapt_net():
         self.corr_dims = [0,1,2]  # 3d-joint dims to correct   0,1,2
 
         # Paths
-        self.config.ckpt_name = self.config.hybrIK_version 
+        self.config.ckpt_name = '' #self.config.hybrIK_version 
         if R:
             self.config.ckpt_name += '_rcnet'
         else:
@@ -49,13 +50,13 @@ class adapt_net():
         else:
             self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5, 
                                     num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
-            self.config.cnet_train_epochs = 100  # 200
+            self.config.cnet_train_epochs = 150  # 200
         
         # Training
         self.config.train_split = 0.8   # 0.85
         self.config.err_scale = 1000    # 100
 
-        self.config.lr = 1e-2
+        self.config.lr = 1e-3
 
         # self.config.weight_decay = 1e-3
         self.config.batch_size = 1024
@@ -102,7 +103,8 @@ class adapt_net():
 
     def train(self,):
         data_all = []
-        for i, trainset_path in enumerate(self.config.cnet_trainset_paths):
+        for i, (trainset_path, backbone_scale) in enumerate(zip(self.config.cnet_trainset_paths,
+                                                                self.config.cnet_trainset_scales)):
             if self.R:
                 trainset_path = trainset_path.replace('cnet', 'rcnet')
             if self.config.train_datalims[i] is not None:
@@ -112,10 +114,13 @@ class adapt_net():
             else:
                 data = torch.from_numpy(np.load(trainset_path)).float()
             # scale according to the backbone
-            data[:2] *= self.config.backbone_scale
+            data[:2] *= backbone_scale
             data_all.append(data)
         data_all = torch.cat(data_all, dim=1)
 
+        # shuffle & split data
+        idx = torch.randperm(data_all.shape[1])
+        data_all = data_all[:, idx, :]
         len_train = int(len(data_all[0]) * self.config.train_split)
         data_train, data_val = data_all[:, :len_train, :], data_all[:, len_train:, :]
 
@@ -124,12 +129,13 @@ class adapt_net():
         data_train = data_train.reshape(data_train.shape[0], 3, -1, 3) # batch, 2, kpts, xyz)
         data_val = data_val.reshape(data_val.shape[0], 3, -1, 3)
 
-        gt_trainset = torch.utils.data.TensorDataset(data_train)
+        train_transform = hflip_keypoints()
+        gt_trainset = cnet_pose_dataset(data_train, transform=train_transform)
         gt_trainloader = torch.utils.data.DataLoader(gt_trainset, batch_size=self.config.batch_size, shuffle=True, 
-                                                     num_workers=16, drop_last=False, pin_memory=True)
-        gt_valset = torch.utils.data.TensorDataset(data_val)
+                                                     num_workers=32, drop_last=False, pin_memory=True)
+        gt_valset = cnet_pose_dataset(data_val)
         gt_valloader = torch.utils.data.DataLoader(gt_valset, batch_size=self.config.batch_size, shuffle=True, 
-                                                   num_workers=16, drop_last=False, pin_memory=True)
+                                                   num_workers=32, drop_last=False, pin_memory=True)
 
         # Train
         print('\n--- Training: {} ---'.format('R-CNet' if self.R else 'CNet'))
@@ -140,8 +146,8 @@ class adapt_net():
             cnet_train_losses = []
             self.cnet.train()
             for batch_idx, data in enumerate(gt_trainloader):
-                backbone_pred = data[0][:, 0, :].to(self.device)
-                target_xyz_17 = data[0][:, 1, :].to(self.device)
+                backbone_pred = data[:, 0, :].to(self.device)
+                target_xyz_17 = data[:, 1, :].to(self.device)
                 inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
                 out = self.cnet(inp)
                 loss = self._loss(backbone_pred, out, target_xyz_17)
@@ -154,8 +160,8 @@ class adapt_net():
             with torch.no_grad():
                 cnet_val_losses = []
                 for batch_idx, data in enumerate(gt_valloader):
-                    backbone_pred = data[0][:, 0, :].to(self.device)
-                    target_xyz_17 = data[0][:, 1, :].to(self.device)
+                    backbone_pred = data[:, 0, :].to(self.device)
+                    target_xyz_17 = data[:, 1, :].to(self.device)
                     inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
                     out = self.cnet(inp)
                     loss = self._loss(backbone_pred, out, target_xyz_17)
