@@ -54,56 +54,46 @@ def make_testset(hybrik, testset, config):
         create_cnet_dataset_w_HybrIK(hybrik, config, testset, 
                                      dataset=config.trainset, task='test',)
 
+def print_test_summary(summary):
+    '''
+    args:
+        summary: dict of dicts, where each dict is a summary of the testset using a different backbone
+    '''
+    print('\n##### TEST SUMMARY #####')
+    for backbone in summary.keys():
+        print('-- {}: --'.format(backbone), end=' ')
+        for test in summary[backbone].keys():
+            print('\n   {}:    '.format(test if test == 'vanilla' else ('   ' + test)), end=' ')
+            for key in summary[backbone][test].keys():
+                if test == 'vanilla': 
+                    print('{}: {:.2f},'.format(key, summary[backbone][test][key]), end=' ')
+                else:
+                    diff = summary[backbone][test][key] - summary[backbone]['vanilla'][key]
+                    print('{}: {:.2f},'.format(key, diff), end=' ')
+        print('\n')
+
 def test(backbone, cnet, R_cnet, testset, config):
     cnet.load_cnets()
     if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
     if backbone is not None: backbone.to(config.device)
 
+    summary = {}
     for test_path, test_scale, test_backbone in zip(config.cnet_testset_paths, 
                                                     config.cnet_testset_scales, 
                                                     config.cnet_testset_backbones):
-        print('\n##### {} TESTSET ERRS #####'.format(test_backbone))
+        summary[test_backbone] = {}
+        cnet.load_cnets(print_str=False)
         if config.test_adapt:
-            print('--- CNet w/TTT: --- ')
+            if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets(print_str=False)
             TTT_eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
                                        testset_path=test_path, backbone_scale=test_scale, 
                                        test_cnet=True, test_adapt=True, use_data_file=config.TTT_from_file)
-            TTT_corr_eval_summary = TTT_eval_summary['corrected']
-            print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(TTT_corr_eval_summary['PA-MPJPE'], 
-                                                                                                TTT_corr_eval_summary['MPJPE'], 
-                                                                                                TTT_corr_eval_summary['x'], 
-                                                                                                TTT_corr_eval_summary['y'], 
-                                                                                                TTT_corr_eval_summary['z']))    
-        print('--- CNet Only: --- ')
-        cnet.load_cnets()
-        if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
         eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
                                testset_path=test_path, backbone_scale=test_scale, test_cnet=True, use_data_file=True)
-        corr_eval_summary = eval_summary['corrected']
-        van_eval_summary = eval_summary['backbone']
-        print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'], 
-                                                                                            corr_eval_summary['MPJPE'], 
-                                                                                            corr_eval_summary['x'], 
-                                                                                            corr_eval_summary['y'], 
-                                                                                            corr_eval_summary['z']))
-        print('--- Vanilla: --- ')
-        print('XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(van_eval_summary['PA-MPJPE'], 
-                                                                                            van_eval_summary['MPJPE'], 
-                                                                                            van_eval_summary['x'], 
-                                                                                            van_eval_summary['y'], 
-                                                                                            van_eval_summary['z']))
-        print('--- Corr. - Van.: --- ')
-        if config.test_adapt:
-            print('CN w/TTT: XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(TTT_corr_eval_summary['PA-MPJPE'] - van_eval_summary['PA-MPJPE'],
-                                                                                                    TTT_corr_eval_summary['MPJPE'] - van_eval_summary['MPJPE'],
-                                                                                                    TTT_corr_eval_summary['x'] - van_eval_summary['x'],
-                                                                                                    TTT_corr_eval_summary['y'] - van_eval_summary['y'],
-                                                                                                    TTT_corr_eval_summary['z'] - van_eval_summary['z'],))
-        print('CN alone: XYZ_14 PA-MPJPE: {:2f} | MPJPE: {:2f}, x: {:2f}, y: {:.2f}, z: {:2f}'.format(corr_eval_summary['PA-MPJPE'] - van_eval_summary['PA-MPJPE'],
-                                                                                                corr_eval_summary['MPJPE'] - van_eval_summary['MPJPE'],
-                                                                                                corr_eval_summary['x'] - van_eval_summary['x'],
-                                                                                                corr_eval_summary['y'] - van_eval_summary['y'],
-                                                                                                corr_eval_summary['z'] - van_eval_summary['z'],))
+        summary[test_backbone]['vanilla'] = eval_summary['backbone']
+        summary[test_backbone]['w/CN'] = eval_summary['corrected']
+        summary[test_backbone]['+TTT'] = TTT_eval_summary['corrected']
+    print_test_summary(summary)
 
 def make_mmlab_test(hybrik, cnet, R_cnet, config):
     cnet.load_cnets()
@@ -126,7 +116,7 @@ def get_datasets(backbone_cfg, config):
     if config.backbone == 'spin':
         return trainsets, None
     elif any([(task in config.tasks) for task in 
-            ['make_trainset', 'train_RCNet', 'train_CNet']]):
+            ['make_trainsets', 'train_RCNet', 'train_CNet']]):
         for dataset in config.trainsets:
             if dataset == 'PW3D':
                 trainset = PW3D(
@@ -197,20 +187,21 @@ def main_worker(config):
     cnet, R_cnet = setup_adapt_nets(config)    
     cnet_trainsets, cnet_testset = get_datasets(backbone_cfg, config)
 
-    if 'make_trainset' in config.tasks:
-        make_trainsets(backbone_model, cnet_trainsets, config)
-    if 'make_testset' in config.tasks: 
-        make_testset(backbone_model, cnet_testset, config)
-    if 'train_CNet' in config.tasks:
-        cnet.train()
-    if 'make_RCNet_trainset' in config.tasks:
-        cnet.write_train_preds()
-    if 'train_RCNet' in config.tasks:
-        R_cnet.train()
-    if 'test' in config.tasks:
-        test(backbone_model, cnet, R_cnet, cnet_testset, config)
-    if 'make_mmlab_test' in config.tasks:
-        make_mmlab_test(backbone_model, cnet, R_cnet, config)
+    for task in config.tasks:
+        if task == 'make_trainsets':
+            make_trainsets(backbone_model, cnet_trainsets, config)
+        if task == 'make_testset':
+            make_testset(backbone_model, cnet_testset, config)
+        if task == 'train_CNet':
+            cnet.train()
+        if task == 'make_RCNet_trainset':
+            cnet.write_train_preds()
+        if task == 'train_RCNet':
+            R_cnet.train()
+        if task == 'test':
+            test(backbone_model, cnet, R_cnet, cnet_testset, config)
+        if task == 'make_mmlab_test':
+            make_mmlab_test(backbone_model, cnet, R_cnet, config)
     print("All Done!")
 
 if __name__ == "__main__":    
