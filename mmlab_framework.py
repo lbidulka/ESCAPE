@@ -23,54 +23,90 @@ from types import SimpleNamespace
 
 def get_config(args, ):
     config = SimpleNamespace()
+    config.proj_root = '/home/luke/lbidulka/uncertnet_poserefiner/'
     config.root = 'uncertnet_poserefiner/backbones/mmhuman3d/'
     os.chdir(config.root)
     config.args = args
 
     # Tasks
-    # config.tasks = ['gen_preds', 'gen_cnet_data', 'eval_corrected']
+    # config.tasks = ['gen_preds', 'eval', 'gen_cnet_data', 'eval_corrected']
+    # config.tasks = ['gen_preds', 'eval', 'gen_cnet_data',]
     config.tasks = ['gen_preds', 'gen_cnet_data',]
     # config.tasks = ['gen_preds']
-    config.tasks = ['gen_cnet_data']
+    # config.tasks = ['gen_cnet_data']
     # config.tasks = ['eval_corrected']
     config.save_preds = True    # Save the generated preds?
 
     # Backbone generation settings
-    config.backbone = 'spin'  # 'hybrik' 'spin'
-    config.dataset = 'PW3D' # 'PW3D' 'coco' 'mpii' 'hp3d'
-    config.subset_len = 50_000 # pwd3d: 35k, mpii: 14810, coco2017: 40055
+    config.backbone = 'cliff'  # 'hybrik' 'spin' 'pare' 'cliff'
+    config.dataset = 'MPii' # 'PW3D' 'coco' 'MPii' 'HP3D'
+    config.subset_len = 110_000 # hp3d: 110k, pwd3d: 35k, mpii: 14810, coco2017: 40055
     set_model_and_data_config(config)
 
     # Paths
-    config.cnet_data_path = '/data/lbidulka/adapt_3d/' #'/media/ExtHDD/luke_data/adapt_3d/'
-    config.cnet_dataset_path = '{}{}/mmlab_{}_{}'.format(config.cnet_data_path, 
-                                                             config.dataset, 
-                                                             config.backbone, 
+    config.cnet_data_path = '/data/lbidulka/adapt_3d/'
+    config.cnet_dataset_path = '{}{}/mmlab_{}_{}'.format(config.cnet_data_path, config.dataset, config.backbone, 
                                                              'test' if (config.dataset == 'PW3D') else 'train') 
     return config
 
 def set_model_and_data_config(config):
+    if ('eval' in config.tasks) and (config.dataset != 'PW3D'):
+        raise NotImplementedError
     # HybrIK
     if config.backbone == 'hybrik':
-        config.args.config = 'configs/hybrik/resnet34_hybrik_eval_train.py'
+        config.args.config = config.proj_root + 'configs/mmhuman3d/hybrik_resnet34.py'
         config.args.checkpoint = 'data/pretrained/pretrain_hybrik.pth'
         config.args.work_dir = 'work_dirs/hybrik'
         if config.dataset == 'PW3D':
             config.eval_data = 'test'
         if config.dataset == 'coco':    # train2017
             config.eval_data = 'coco_eval'
-        if config.dataset == 'hp3d':
+        if config.dataset == 'HP3D':
             config.eval_data = 'hp3d_eval'
+        else:
+            raise NotImplementedError
     # Spin
     elif config.backbone == 'spin':
-        config.args.config = 'configs/spin/resnet50_spin_eval_train.py'
+        config.args.config = config.proj_root + 'configs/mmhuman3d/spin_resnet50.py'
         config.args.checkpoint = 'data/pretrained/pretrain_spin.pth'
         config.args.work_dir = 'work_dirs/spin'
         if config.dataset == 'PW3D':
             config.eval_data = 'test'
-        if config.dataset == 'mpii':
+        elif config.dataset == 'MPii':
             config.eval_data = 'mpii_eval'
-    # eval_data = 'mpii_eval'        
+        elif config.dataset == 'HP3D':
+            config.eval_data = 'hp3d_eval'
+        else:
+            raise NotImplementedError
+    # Cliff
+    elif config.backbone == 'cliff':
+        config.args.config = config.proj_root + 'configs/mmhuman3d/cliff_resnet50_pw3d_cache.py'
+        config.args.checkpoint = 'data/pretrained/pretrain_cliff.pth'
+        config.args.work_dir = 'work_dirs/cliff'
+        if config.dataset == 'PW3D':
+            config.eval_data = 'test'
+        elif config.dataset == 'HP3D':
+            config.eval_data = 'hp3d_eval'
+        elif config.dataset == 'MPii':
+            config.eval_data = 'mpii_eval'
+        else: 
+            raise NotImplementedError
+    # Pare
+    elif config.backbone == 'pare':
+        config.args.config = config.proj_root + 'configs/mmhuman3d/pare_hrnet_w32_conv_mix_cache.py'
+        # config.args.checkpoint = 'data/pretrained/pretrain_pare.pth'
+        config.args.checkpoint = 'data/pretrained/pretrain_pare_wMosh.pth'
+        config.args.work_dir = 'work_dirs/pare'
+        if config.dataset == 'PW3D':
+            config.eval_data = 'test'
+        elif config.dataset == 'HP3D':
+            config.eval_data = 'hp3d_eval'
+        elif config.dataset == 'MPii':
+            config.eval_data = 'mpii_eval'
+        else: 
+            raise NotImplementedError
+    else:
+        raise NotImplementedError
     return config
 
 def parse_args():
@@ -116,8 +152,8 @@ def parse_args():
     parser.add_argument('--local_rank', type=int, default=0)
     parser.add_argument(
         '--device',
-        choices=['cpu', 'cuda'],
-        default='cuda',
+        choices=['cpu', 'cuda:0', 'cuda:1'],
+        default='cuda:1',
         help='device used for testing')
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
@@ -138,18 +174,15 @@ def gen_preds(config, cfg, dataset, data_loader):
     if args.device == 'cpu':
         model = model.cpu()
     else:
-        model = MMDataParallel(model, device_ids=[0])
+        if args.device == 'cuda:0': device_id = 0
+        elif args.device == 'cuda:1': device_id = 1
+        model = MMDataParallel(model, device_ids=[device_id])
     outputs = single_gpu_test(model, data_loader)
 
-    rank, _ = get_dist_info()
-    eval_cfg = cfg.get('evaluation', args.eval_options)
-    eval_cfg.update(dict(metric=args.metrics))
-    if rank == 0:
-        mmcv.mkdir_or_exist(osp.abspath(args.work_dir))
-        results = dataset.dataset.get_results_and_human_gts(outputs, args.work_dir, config.save_preds)
-        # results = dataset.dataset.evaluate(outputs, args.work_dir, **eval_cfg)
+    mmcv.mkdir_or_exist(osp.abspath(args.work_dir))
+    results = dataset.dataset.get_results_and_human_gts(outputs, args.work_dir, config.save_preds)
     
-    return results
+    return results, outputs
 
 def setup_cfg_and_data(config, eval_data):
     args = config.args
@@ -186,54 +219,67 @@ def setup_cfg_and_data(config, eval_data):
 def main():
     args = parse_args()
     config = get_config(args)
-
+    print("\n ----- Backbone: {}, Dataset: {} ----- \n".format(config.backbone, config.dataset))
     dataset, data_loader, cfg, = setup_cfg_and_data(config, config.eval_data)
-    
     # Do tasks
-    if 'gen_preds' in config.tasks:
-        results = gen_preds(config, cfg, dataset, data_loader)
-    else:
-        results = mmcv.load(os.path.join(args.work_dir, 'result_keypoints_gts.json'))
-    results = {k: np.array(v) for k, v in results.items()}
+    for task in config.tasks:
+        if task == 'gen_preds':
+            results, outputs = gen_preds(config, cfg, dataset, data_loader)
+        else:
+            results = mmcv.load(os.path.join(args.work_dir, 'result_keypoints_gts.json'))
+        results = {k: np.array(v) for k, v in results.items()}
+        if task == 'eval': 
+            # Only works for PW3D
+            eval_cfg = cfg.get('evaluation', args.eval_options)
+            eval_cfg.update(dict(metric=args.metrics))
+            eval_results = dataset.dataset.evaluate(outputs, args.work_dir, **eval_cfg)
+            print(eval_results)
+        if task == 'gen_cnet_data':
+            print("Saving {} pred dataset to {}".format(config.backbone, config.cnet_dataset_path + '.npy'))
 
-    if 'gen_cnet_data' in config.tasks:
-        print("Saving HybrIK pred dataset to {}".format(config.cnet_dataset_path + '.npy'))
+            # change to CNet format
+            scale = 1000
+            backbone_preds = (results['preds'] / scale).reshape(results['preds'].shape[0], -1)
+            target_xyz_17s = (results['gts'] / scale).reshape(results['gts'].shape[0], -1)
+            img_idss = np.repeat(results['ids'].reshape(-1,1), backbone_preds.shape[1], axis=1)
 
-        # change to CNet format
-        scale = 1000
-        backbone_preds = (results['preds'] / scale).reshape(results['preds'].shape[0], -1)
-        target_xyz_17s = (results['gts'] / scale).reshape(results['gts'].shape[0], -1)
-        img_idss = np.repeat(results['ids'].reshape(-1,1), backbone_preds.shape[1], axis=1)
-        
-        out_path = config.cnet_dataset_path + '.npy'
-        np.save(out_path, np.array([backbone_preds, target_xyz_17s, img_idss]))
+            # extract img names from image_paths
+            # img_names = []
+            # for img_path in results['paths']:
+            #     img_name = img_path.split('/')[-1]
+            #     img_name = img_name.split('.')[0]
+            #     img_names.append(int(img_name))
+            # img_names = np.repeat(np.array(img_names).reshape(-1,1), backbone_preds.shape[1], axis=1)
+            
+            out_path = config.cnet_dataset_path + '.npy'
+            # np.save(out_path, np.array([backbone_preds, target_xyz_17s, img_idss, img_names]))
+            np.save(out_path, np.array([backbone_preds, target_xyz_17s, img_idss,]))
+        if task == 'eval_corrected':
+            # corr_pred_path = config.cnet_dataset_path + '.npy'
+            corr_pred_path = config.cnet_dataset_path + '_corrected.npy'
+            print("Evaluating corrected preds from {}".format(corr_pred_path))
+            corr_preds, corr_gts, corr_ids = np.load(corr_pred_path)
+            
+            # change back to MMLab format
+            corr_results = {}
+            corr_results['preds'] = (corr_preds).reshape(-1, 17, 3)
+            corr_results['gts'] = (corr_gts).reshape(-1, 17, 3)
+            corr_results['ids'] = corr_ids[:,0].reshape(-1,1)
+            # corr_results['preds'] = results['preds'] / 1000
+            corr_results['poses'] = results['poses']
+            corr_results['betas'] = results['betas']
 
-    if 'eval_corrected' in config.tasks:
-        # corr_pred_path = config.cnet_dataset_path + '.npy'
-        corr_pred_path = config.cnet_dataset_path + '_corrected.npy'
-        print("Evaluating corrected preds from {}".format(corr_pred_path))
-        corr_preds, corr_gts, corr_ids = np.load(corr_pred_path)
-        
-        # change back to MMLab format
-        corr_results = {}
-        corr_results['preds'] = (corr_preds).reshape(-1, 17, 3)
-        corr_results['gts'] = (corr_gts).reshape(-1, 17, 3)
-        corr_results['ids'] = corr_ids[:,0].reshape(-1,1)
-        # corr_results['preds'] = results['preds'] / 1000
-        corr_results['poses'] = results['poses']
-        corr_results['betas'] = results['betas']
+            # sort them using the ids
+            sort_idx = np.argsort(corr_results['ids'].reshape(-1))
+            for k, v in corr_results.items():
+                corr_results[k] = v[sort_idx]
 
-        # sort them using the ids
-        sort_idx = np.argsort(corr_results['ids'].reshape(-1))
-        for k, v in corr_results.items():
-            corr_results[k] = v[sort_idx]
-
-        # do evaluation
-        eval_cfg = cfg.get('evaluation', args.eval_options)
-        eval_cfg.update(dict(metric=args.metrics))
-        results = dataset.dataset.re_evaluate(corr_results=corr_results, **eval_cfg)
-        
-        print(results)
+            # do evaluation
+            eval_cfg = cfg.get('evaluation', args.eval_options)
+            eval_cfg.update(dict(metric=args.metrics))
+            results = dataset.dataset.re_evaluate(corr_results=corr_results, **eval_cfg)
+            
+            print(results)
 
 
 if __name__ == '__main__':
