@@ -97,7 +97,8 @@ def unpack_test_data(data, m, model_2d, use_data_file, config, flip_test=True):
 
     return output, labels, img_ids, poses_2d
 
-def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset=None, 
+def eval_gt(cnet, R_cnet, config, 
+            m=None, gt_eval_dataset=None, 
             testset_path=None, backbone_scale=1.0,
             test_cnet=False, test_adapt=False, 
             use_data_file=False, mmlab_out=False):
@@ -121,7 +122,8 @@ def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset=None,
         test_data *= backbone_scale
         gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
     gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False, 
-                                                 num_workers=16, drop_last=False, pin_memory=True)
+                                                #  num_workers=16, drop_last=False, pin_memory=True)
+                                                drop_last=False, pin_memory=True)
     kpt_pred = {}
     kpt_all_pred = {}
     if m is not None: m.eval()
@@ -232,13 +234,7 @@ def eval_gt(m, cnet, R_cnet, config, gt_eval_dataset=None,
     backbone_preds = backbone_preds[:, config.EVAL_JOINTS]
     corr_preds = corr_preds[:, config.EVAL_JOINTS]
     gts = gts[:, config.EVAL_JOINTS]
-    # adjust scale
-    # if config.backbone == 'hybrik':
-    #     scale = 2.2 * 1000
-    # elif config.backbone == 'spin':
-    #     scale = 1000 * 0.85
-    # else:
-    #     raise NotImplementedError
+    
     backbone_preds *= 1000
     corr_preds *= 1000
     gts *= 1000

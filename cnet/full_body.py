@@ -46,20 +46,22 @@ class adapt_net():
             #                       num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
             self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5, 
                                   num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
-            self.config.cnet_train_epochs = 150  # 200
+            self.config.cnet_train_epochs = 100  # 200
+            self.config.lr = 1e-3
         else:
+            # self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5, 
+            #                         num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
             self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5, 
                                     num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
-            self.config.cnet_train_epochs = 150  # 200
+            self.config.cnet_train_epochs = 50  # 200
+            self.config.lr = 1e-3
         
         # Training
-        self.config.train_split = 0.8   # 0.85
+        self.config.train_split = 0.75   # 0.85 
         self.config.err_scale = 1000    # 100
 
-        self.config.lr = 1e-3
-
         # self.config.weight_decay = 1e-3
-        self.config.batch_size = 1024
+        self.config.batch_size = 4096
 
         self.config.ep_print_freq = 5
 
@@ -101,22 +103,36 @@ class adapt_net():
             cnet_in = corr_pred
         return corr_pred
 
-    def train(self,):
+    def _load_data_files(self,):
+        '''
+        Fetch and load the training files
+        '''
         data_all = []
         for i, (trainset_path, backbone_scale) in enumerate(zip(self.config.cnet_trainset_paths,
                                                                 self.config.cnet_trainset_scales)):
             if self.R:
                 trainset_path = trainset_path.replace('cnet', 'rcnet')
+            
+            data = torch.from_numpy(np.load(trainset_path)).float()
+            
+            if ('MPii' in trainset_path) and ('mmlab' in trainset_path):
+                # samples with all 0 labels need to be removed
+                idx = np.where(data[1,:,:].sum(axis=1) != 0)
+                data = data[:, idx, :]
+                data = data.squeeze()
+
             if self.config.train_datalims[i] is not None:
-                data = torch.from_numpy(np.load(trainset_path)).float()
                 # get random subset of data
-                data = data[:, np.random.choice(data.shape[1], min(self.config.train_datalims[i], data.shape[1]), replace=False), :]
-            else:
-                data = torch.from_numpy(np.load(trainset_path)).float()
+                data = data[:, np.random.choice(data.shape[1], min(self.config.train_datalims[i], data.shape[1]), replace=False), :]               
+
             # scale according to the backbone
             data[:2] *= backbone_scale
-            data_all.append(data)
+            data_all.append(data[:3])   # TEMP: don't include image paths, if they are present
         data_all = torch.cat(data_all, dim=1)
+        return data_all
+
+    def train(self,):
+        data_all = self._load_data_files()
 
         # shuffle & split data
         idx = torch.randperm(data_all.shape[1])
@@ -132,10 +148,12 @@ class adapt_net():
         train_transform = hflip_keypoints()
         gt_trainset = cnet_pose_dataset(data_train, transform=train_transform)
         gt_trainloader = torch.utils.data.DataLoader(gt_trainset, batch_size=self.config.batch_size, shuffle=True, 
-                                                     num_workers=32, drop_last=False, pin_memory=True)
+                                                     num_workers=8, drop_last=False, pin_memory=True)
+                                                    # drop_last=False, pin_memory=True)
         gt_valset = cnet_pose_dataset(data_val)
         gt_valloader = torch.utils.data.DataLoader(gt_valset, batch_size=self.config.batch_size, shuffle=True, 
-                                                   num_workers=32, drop_last=False, pin_memory=True)
+                                                   num_workers=8, drop_last=False, pin_memory=True)
+                                                # drop_last=False, pin_memory=True)
 
         # Train
         print('\n--- Training: {} ---'.format('R-CNet' if self.R else 'CNet'))
@@ -197,10 +215,10 @@ class adapt_net():
         for trainset_path in self.config.cnet_trainset_paths:
             data_train = torch.from_numpy(np.load(trainset_path)).float()
             data_train = data_train.permute(1,0,2)
-            data_train = data_train.reshape(data_train.shape[0], 3, -1, 3) # batch, 2, kpts, xyz)
+            data_train = data_train.reshape(data_train.shape[0], data_train.shape[1], -1, 3) # batch, 2, kpts, xyz)
             gt_trainset = torch.utils.data.TensorDataset(data_train)
             gt_trainloader = torch.utils.data.DataLoader(gt_trainset, batch_size=self.config.batch_size, 
-                                                         shuffle=False, num_workers=16, drop_last=False, 
+                                                         shuffle=False, num_workers=8, drop_last=False, 
                                                          pin_memory=True)
             # Iterate over train data
             print('\n--- Getting Preds with {} on {} ---'.format(('R-CNet' if self.R else 'CNet'),

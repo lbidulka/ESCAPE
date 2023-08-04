@@ -39,33 +39,33 @@ def get_config():
     config.split_corr_dim_trick = False  # correct z with trained CNet, correct x/y with tuned CNet
 
     config.corr_steps = 1   # How many correction iterations at inference?
-    config.corr_step_size = 1 # for err pred, what fraction of CNet corr to do
+    config.corr_step_size = 0.5 # for err pred, what fraction of CNet corr to do
     config.test_adapt = False
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
     config.TTT_from_file = True
-    config.test_adapt_lr = 1e-3
-    config.adapt_steps = 5
-    config.TTT_errscale = 1e3
+    config.test_adapt_lr = 1e-4
+    config.adapt_steps = 1
+    config.TTT_errscale = 1e2
 
     # Tasks
-    # config.tasks = ['make_trainset', 'make_testset', 'train_CNet', 'make_RCNet_trainset', 
+    # config.tasks = ['make_trainsets', 'make_testset', 'train_CNet', 'make_RCNet_trainset', 
     #                 train_RCNet, 'test', make_mmlab_test] 
-    # config.tasks = ['make_trainset']
+    # config.tasks = ['make_trainsets']
     config.tasks = ['train_CNet', 'make_RCNet_trainset', 
                     'train_RCNet', 'test']
     # config.tasks = ['train_CNet', 'test']
-    # config.tasks = ['make_RCNet_trainset']
+    # config.tasks = ['make_RCNet_trainset', 'train_RCNet']
     # config.tasks = ['train_RCNet', 'test']
     # config.tasks = ['test']
     # config.tasks = ['make_mmlab_test']
 
     # Data
-    config.trainsets = ['HP3D', 'MPii'] # 'MPii', 'HP3D', 'PW3D',
+    config.trainsets = ['MPii', 'HP3D'] # 'MPii', 'HP3D', 'PW3D',
     config.trainsets.sort()
     config.trainsets_str = '_'.join(config.trainsets)
     config.testset = 'PW3D' # 'HP3D', 'PW3D',
 
-    config.test_eval_limit = 500 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
+    config.test_eval_limit = 50_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
     if config.testset == 'PW3D':
         config.EVAL_JOINTS = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
         config.EVAL_JOINTS.sort()
@@ -74,16 +74,20 @@ def get_config():
     else:
         raise NotImplementedError
 
-    config.train_backbones = ['spin', 'hybrik'] # 'spin', 'hybrik'
-    config.test_backbones = ['hybrik', 'spin'] # 'spin', 'hybrik'
-    config.backbone = 'spin' # 'spin' 'hybrik'
+    config.train_backbones = ['cliff', 'pare', 'spin', 'hybrik'] # 'spin', 'hybrik', 'cliff', 'pare'
+    # config.test_backbones = ['hybrik', 'spin'] # 'spin', 'hybrik', 'pare', 'cliff'
+    # config.test_backbones = ['hybrik', 'spin'] 
+    # config.test_backbones = ['spin'] 
+    config.test_backbones = ['hybrik', 'spin', 'pare', 'cliff']
     config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
 
     config.backbone_scales = {
-        'spin': 0.85,
+        'spin': 1.0, #0.85,
         'hybrik': 2.2,
+        'pare': 1.0,
+        'cliff': 1.0,
     }
-    config.mmlab_backbones = ['spin',]
+    config.mmlab_backbones = ['spin', 'pare', 'cliff']
 
     if config.hybrIK_version == 'res34_cam':
         config.hybrik_cfg = 'configs/256x192_adam_lr1e-3-res34_smpl_3d_cam_2x_mix.yaml'
@@ -106,19 +110,24 @@ def get_config():
             trainlim = None
             if train_backbone == 'hybrik':
                 if trainset in ['HP3D', 'MPii']:
-                    path = '{}{}/{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, 
-                                                                trainset,
-                                                                config.hybrIK_version,)
+                    path = '{}{}/{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, trainset, config.hybrIK_version,)
                 if trainset == 'HP3D':
-                    trainlim = 25_000 #50_000   # hyperparam
+                    trainlim = 50_000 #50_000   # hyperparam
             elif train_backbone == 'spin':
-                if trainset in ['HP3D',]:
-                    path = '{}{}/mmlab_{}_train.npy'.format(config.cnet_dataset_path, 
-                                                            trainset,
-                                                            train_backbone,)
+                if trainset in ['HP3D', 'MPii']:
+                    path = '{}{}/mmlab_{}_train.npy'.format(config.cnet_dataset_path, trainset, train_backbone,)
                 if trainset == 'HP3D':
-                    trainlim = 25_000 #50_000   # hyperparam
-                    
+                    trainlim = 50_000 #50_000   # hyperparam
+            elif train_backbone == 'cliff':
+                if trainset in ['HP3D', 'MPii']:
+                    path = '{}{}/mmlab_{}_train.npy'.format(config.cnet_dataset_path, trainset, train_backbone,)
+                if trainset == 'HP3D':
+                    trainlim = 50_000 #50_000   # hyperparam
+            elif train_backbone == 'pare':
+                if trainset in ['HP3D', 'MPii']:
+                    path = '{}{}/mmlab_{}_train.npy'.format(config.cnet_dataset_path, trainset, train_backbone,)
+                if trainset == 'HP3D':
+                    trainlim = 50_000 #50_000   # hyperparam
             else:
                 raise NotImplementedError
             if path: 

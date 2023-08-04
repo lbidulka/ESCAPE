@@ -82,17 +82,19 @@ def test(backbone, cnet, R_cnet, testset, config):
                                                     config.cnet_testset_scales, 
                                                     config.cnet_testset_backbones):
         summary[test_backbone] = {}
+        TTT_eval_summary = None
         cnet.load_cnets(print_str=False)
         if config.test_adapt:
             if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets(print_str=False)
-            TTT_eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
+            TTT_eval_summary = eval_gt(cnet, R_cnet, config, backbone, testset, 
                                        testset_path=test_path, backbone_scale=test_scale, 
                                        test_cnet=True, test_adapt=True, use_data_file=config.TTT_from_file)
-        eval_summary = eval_gt(backbone, cnet, R_cnet, config, testset, 
+        cnet.load_cnets(print_str=False)
+        eval_summary = eval_gt(cnet, R_cnet, config, testset, backbone, 
                                testset_path=test_path, backbone_scale=test_scale, test_cnet=True, use_data_file=True)
         summary[test_backbone]['vanilla'] = eval_summary['backbone']
         summary[test_backbone]['w/CN'] = eval_summary['corrected']
-        summary[test_backbone]['+TTT'] = TTT_eval_summary['corrected']
+        if TTT_eval_summary: summary[test_backbone]['+TTT'] = TTT_eval_summary['corrected']
     print_test_summary(summary)
 
 def make_mmlab_test(hybrik, cnet, R_cnet, config):
@@ -113,10 +115,8 @@ def make_mmlab_test(hybrik, cnet, R_cnet, config):
 
 def get_datasets(backbone_cfg, config):
     trainsets = []
-    if config.backbone == 'spin':
-        return trainsets, None
-    elif any([(task in config.tasks) for task in 
-            ['make_trainsets', 'train_RCNet', 'train_CNet']]):
+    if any([(task in config.tasks) for task in 
+            ['make_trainsets', 'make_trainsets']]):
         for dataset in config.trainsets:
             if dataset == 'PW3D':
                 trainset = PW3D(
@@ -138,6 +138,8 @@ def get_datasets(backbone_cfg, config):
             else:
                 raise NotImplementedError
             trainsets.append(trainset)
+    else:
+        return trainsets, None
     if 'test' in config.tasks:
         if config.testset == 'PW3D':
             testset = PW3D(
@@ -146,27 +148,19 @@ def get_datasets(backbone_cfg, config):
                 train=False,
                 root='/media/ExtHDD/Mohsen_data/3DPW')
         elif dataset == 'HP3D':
-            raise NotImplementedError    # Need to extract the test img frames
+            raise NotImplementedError
         else:
             raise NotImplementedError
     else: 
         testset = None
     return trainsets, testset
 
-def load_backbone(config):
+def load_hybrik(config):
     ''' Load the backbone 3D pose estimation model '''
-    if config.backbone == 'hybrik':
-        model_cfg = update_config(config.hybrik_cfg) 
-        print('USING HYBRIK VER: {}'.format(config.hybrIK_version))
-        model = load_pretrained_hybrik(config, model_cfg)
-        model = model.to('cpu')
-    elif config.backbone == 'spin':
-        if (config.test_adapt and not config.TTT_from_file):
-            raise NotImplementedError
-        model = None
-        model_cfg = None
-    else:
-        raise NotImplementedError
+    model_cfg = update_config(config.hybrik_cfg) 
+    print('USING HYBRIK VER: {}'.format(config.hybrIK_version))
+    model = load_pretrained_hybrik(config, model_cfg)
+    model = model.to('cpu')
     return model, model_cfg
 
 def setup_adapt_nets(config):
@@ -183,9 +177,12 @@ def setup_adapt_nets(config):
     return cnet, R_cnet
 
 def main_worker(config): 
-    backbone_model, backbone_cfg = load_backbone(config)    
-    cnet, R_cnet = setup_adapt_nets(config)    
-    cnet_trainsets, cnet_testset = get_datasets(backbone_cfg, config)
+    cnet, R_cnet = setup_adapt_nets(config)
+    if ('make_trainsets' in config.tasks) or ('make_testset' in config.tasks) or (config.TTT_from_file == False):
+        backbone_model, backbone_cfg = load_hybrik(config)
+        cnet_trainsets, cnet_testset = get_datasets(backbone_cfg, config)
+    else:
+        backbone_model, backbone_cfg, cnet_trainsets, cnet_testset = None, None, None, None
 
     for task in config.tasks:
         if task == 'make_trainsets':

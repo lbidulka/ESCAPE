@@ -14,9 +14,11 @@ def unpack_train_data(data, dataset, target_key, config):
         labels['img_center'] = data['img_center']
         labels[target_key] = data['gt_pose']
         bboxes = data['bbox']
-        img_ids = torch.ones(len(bboxes)) * -9  # dummy
+        img_ids = data['img_id'] #torch.ones(len(bboxes)) * -9  # dummy
+        img_paths = data['img_path']
     else:
         (inps, labels, img_ids, bboxes) = data
+        img_paths = torch.ones(len(bboxes)) * -9  # dummy
 
     if isinstance(inps, list):
         inps = [inp.to(config.device) for inp in inps]
@@ -29,7 +31,7 @@ def unpack_train_data(data, dataset, target_key, config):
         except AttributeError:
             assert k == 'type'
     
-    return inps, labels, img_ids, bboxes
+    return inps, labels, img_ids, img_paths, bboxes
 
 def convert_kpts_to_h36m_17s(target_xyzs, dataset):
     '''
@@ -80,11 +82,9 @@ def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
     }
     target_key = target_keys[dataset]
 
-    backbone_preds = []
-    target_xyzs = []
-    img_idss = []
+    backbone_preds, target_xyzs, img_idss, img_pathss = [], [], [], []
     for i, data in enumerate(tqdm(gt_loader, dynamic_ncols=True)):
-        inps, labels, img_ids, bboxes = unpack_train_data(data, dataset, target_key, opt)
+        inps, labels, img_ids, img_paths, bboxes = unpack_train_data(data, dataset, target_key, opt)
 
         m_output = m(inps, flip_test=opt.flip_test, bboxes=bboxes.to(config.device), img_center=labels['img_center'])
         backbone_pred = m_output.pred_xyz_jts_17
@@ -92,7 +92,9 @@ def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
         backbone_preds.append(backbone_pred)
         target_xyzs.append(labels[target_key])
         img_idss.append(img_ids)
-        # if i > 4: break   # DEBUG
+        # img_pathss.append(img_paths)
+
+        if i > 1: break
 
     print("Detaching & reformatting...")
     backbone_preds = [b.detach().cpu().numpy() for b in backbone_preds]
@@ -100,7 +102,16 @@ def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
     target_xyzs = [t.detach().cpu().numpy() for t in target_xyzs]
     target_xyz_17s = convert_kpts_to_h36m_17s(target_xyzs, dataset)
     target_xyz_17s = np.concatenate(target_xyz_17s, axis=0)
-    img_idss = [i.detach().cpu().numpy() for i in img_idss]    
+    img_idss = np.concatenate([i.detach().cpu().numpy() for i in img_idss], axis=0).reshape(-1,1)
+
+    # img_names = []
+    # for batch in img_pathss:
+    #     for img_path in batch:
+    #         img_name = img_path.split('/')[-1]
+    #         img_name = img_name.split('.')[0]
+    #         img_names.append(int(img_name))
+    # # img_paths = np.concatenate([int(p.split('/')[-1].split('.')[0]) for p in img_paths], axis=0).reshape(-1,1)
+    # img_pathss = np.array(img_names).reshape(-1,1)
 
     # normalize target magnitude to match the backbone
     scale_pred = np.linalg.norm(backbone_preds, keepdims=True)
@@ -108,11 +119,12 @@ def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
     target_xyz_17s /= (scale_gt / scale_pred)
 
     if task == 'train':
-        dataset_outpath = config.cnet_trainset_path
+        dataset_outpath = '{}{}/{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, dataset, config.hybrIK_version,)
     elif task == 'test':
-        dataset_outpath = config.cnet_testset_path
+        dataset_outpath = '{}{}/{}_cnet_hybrik_test.npy'.format(config.cnet_dataset_path, dataset, config.hybrIK_version,)
     print("Saving HybrIK pred dataset to {}".format(dataset_outpath))
     np.save(dataset_outpath, np.array([backbone_preds,
                                        target_xyz_17s,
-                                       np.repeat(np.concatenate(img_idss, axis=0).reshape(-1,1), backbone_pred.shape[1], axis=1)]))
+                                       np.repeat(img_idss, backbone_pred.shape[1], axis=1),]))
+                                    #    np.repeat(img_pathss, backbone_pred.shape[1], axis=1)]))
     return
