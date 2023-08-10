@@ -57,6 +57,7 @@ def cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d,):
         loss = errors.loss_weighted_rep_no_scale(poses_2d[:,config.cnet_targets], 
                                                  corrected_pred[:,config.cnet_targets], 
                                                  sum_kpts=True, num_joints=len(config.cnet_targets)).sum()
+        loss *= config.TTT_errscale
     elif config.TTT_loss == 'consistency':
         loss = (backbone_pred[:,config.rcnet_targets] - Rcnet_pred[:,config.rcnet_targets])
         loss = torch.square(loss*config.TTT_errscale).mean()
@@ -107,7 +108,7 @@ def eval_gt(cnet, R_cnet, config,
     if test_adapt:
         batch_size = 1 # 1
     else:
-        batch_size = 128
+        batch_size = 4096
     # Data/Setup
     if use_data_file:
         if mmlab_out:
@@ -122,8 +123,8 @@ def eval_gt(cnet, R_cnet, config,
         test_data *= backbone_scale
         gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
     gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False, 
-                                                #  num_workers=16, drop_last=False, pin_memory=True)
-                                                drop_last=False, pin_memory=True)
+                                                #  num_workers=2, drop_last=False, pin_memory=True)
+                                                drop_last=False)#, pin_memory=True)
     kpt_pred = {}
     kpt_all_pred = {}
     if m is not None: m.eval()
@@ -169,11 +170,9 @@ def eval_gt(cnet, R_cnet, config,
                         optimizer.zero_grad()
 
                         gt_3d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)
-                        gt_mse = torch.square((backbone_pred[:,config.distal_kpts,:] - gt_3d[:,config.distal_kpts])*config.TTT_errscale).mean()
-                        # cnet_outs = torch.flatten((backbone_pred-corrected_pred)[:, config.distal_kpts], start_dim=1)
-                        # cnet_loss = cnet._loss(backbone_pred, cnet_outs, gt_3d)
+                        # gt_mse = torch.square((backbone_pred[:,config.distal_kpts,:] - gt_3d[:,config.distal_kpts])*config.TTT_errscale).mean()
+                        gt_mse = torch.square((corrected_pred - gt_3d)*config.TTT_errscale).mean()
                         losses.append([loss.item(), gt_mse.item()])
-                        # losses.append([loss.item(), cnet_loss.item()])
 
                 with torch.no_grad():
                     # get corrected pred, with adjusted cnet
@@ -203,17 +202,23 @@ def eval_gt(cnet, R_cnet, config,
     # Investigation of TTT loss
     if test_adapt:
         losses = np.array(losses)
-        if config.TTT_loss == 'consistency':
-            utils.quick_plot.simple_2d_plot(losses, save_dir='../../outputs/testset/Knees_losses_consist.png', 
-                                            title='Knees Consist. Loss vs GT 3D distals MSE', 
-                                            xlabel='Consistency Loss', ylabel='GT 3D MSE Loss for Distals',
-                                            # x_lim=[0, 25], y_lim=[0, 7500])
-                                            x_lim=[0, 1000], y_lim=[0, 7500])
-        if config.TTT_loss == 'reproj_2d':
-            utils.quick_plot.simple_2d_plot(losses, save_dir='../../outputs/testset/losses_2d.png', 
-                                            title='2D reproj. Loss vs GT 3D distals MSE', 
-                                            xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss for Distals',
-                                            x_lim=[0,1], y_lim=[0, 7500])
+        # save losses
+        TTT_losses_outpath = '../../outputs/TTT_losses/'
+        backbone_name = testset_path.split('/')[-1].split('.')[-2]
+        TTT_losses_outpath +=  '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
+        np.save(TTT_losses_outpath, losses)
+        # if config.TTT_loss == 'consistency':
+            # utils.quick_plot.simple_2d_plot(losses, save_dir='../../outputs/testset/Knees_losses_consist.png', 
+            #                                 title='Knees Consist. Loss vs GT 3D distals MSE', 
+            #                                 xlabel='Consistency Loss', ylabel='GT 3D MSE Loss for Distals',
+            #                                 # x_lim=[0, 25], y_lim=[0, 7500])
+            #                                 # x_lim=[0, 1000], y_lim=[0, 7500])
+            #                                 x_lim=[0, 100], y_lim=[0, 750])
+        # if config.TTT_loss == 'reproj_2d':
+            # utils.quick_plot.simple_2d_plot(losses, save_dir='../../outputs/testset/losses_2d.png', 
+            #                                 title='2D reproj. Loss vs GT 3D distals MSE', 
+            #                                 xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss for Distals',
+            #                                 x_lim=[0,1], y_lim=[0, 7500])
 
     # save updated file for mmlab eval (preds, gts, ids)
     if mmlab_out:

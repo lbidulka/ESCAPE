@@ -42,22 +42,20 @@ class adapt_net():
 
         # Nets
         if R:
-            # self.cnet = BaselineModel(linear_size=512, num_stages=5, p_dropout=0.5, 
-            #                       num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
-            self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5, 
+            self.continue_train = True if self.config.continue_train_RCNet else False
+            self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5, 
                                   num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
-            self.config.cnet_train_epochs = 100  # 200
-            self.config.lr = 1e-3
+            self.config.cnet_train_epochs = 3  # 200
+            self.config.lr = 5e-4
         else:
-            # self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5, 
-            #                         num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
-            self.cnet = BaselineModel(linear_size=1024, num_stages=4, p_dropout=0.5, 
+            self.continue_train = True if self.config.continue_train_CNet else False
+            self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5, 
                                     num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
-            self.config.cnet_train_epochs = 50  # 200
-            self.config.lr = 1e-3
+            self.config.cnet_train_epochs = 5  # 200
+            self.config.lr = 5e-5
         
         # Training
-        self.config.train_split = 0.75   # 0.85 
+        self.config.train_split = 0.90   # 0.85 
         self.config.err_scale = 1000    # 100
 
         # self.config.weight_decay = 1e-3
@@ -107,38 +105,40 @@ class adapt_net():
         '''
         Fetch and load the training files
         '''
-        data_all = []
+        data_train, data_val = [], []
         for i, (trainset_path, backbone_scale) in enumerate(zip(self.config.cnet_trainset_paths,
                                                                 self.config.cnet_trainset_scales)):
             if self.R:
                 trainset_path = trainset_path.replace('cnet', 'rcnet')
-            
             data = torch.from_numpy(np.load(trainset_path)).float()
-            
             if ('MPii' in trainset_path) and ('mmlab' in trainset_path):
                 # samples with all 0 labels need to be removed
                 idx = np.where(data[1,:,:].sum(axis=1) != 0)
                 data = data[:, idx, :]
                 data = data.squeeze()
-
             if self.config.train_datalims[i] is not None:
                 # get random subset of data
                 data = data[:, np.random.choice(data.shape[1], min(self.config.train_datalims[i], data.shape[1]), replace=False), :]               
-
             # scale according to the backbone
             data[:2] *= backbone_scale
-            data_all.append(data[:3])   # TEMP: don't include image paths, if they are present
-        data_all = torch.cat(data_all, dim=1)
-        return data_all
+
+            # slice data
+            len_train = int(len(data[0]) * self.config.train_split)
+            data_t, data_v = data[:, :len_train, :], data[:, len_train:, :]
+
+            data_train.append(data_t[:3])   # TEMP: don't include image paths, if they are present
+            data_val.append(data_v[:3])
+
+        data_train = torch.cat(data_train, dim=1)
+        data_val = torch.cat(data_val, dim=1)  
+
+        return data_train, data_val
 
     def train(self,):
-        data_all = self._load_data_files()
-
-        # shuffle & split data
-        idx = torch.randperm(data_all.shape[1])
-        data_all = data_all[:, idx, :]
-        len_train = int(len(data_all[0]) * self.config.train_split)
-        data_train, data_val = data_all[:, :len_train, :], data_all[:, len_train:, :]
+        data_train, data_val = self._load_data_files()
+        # shuffle train data
+        idx = torch.randperm(data_train.shape[1])
+        data_train = data_train[:, idx, :]
 
         data_train = data_train.permute(1,0,2)
         data_val = data_val.permute(1,0,2)
@@ -157,6 +157,9 @@ class adapt_net():
 
         # Train
         print('\n--- Training: {} ---'.format('R-CNet' if self.R else 'CNet'))
+        if self.continue_train:
+            print(" WARNING: CONTINUING TRAINING FROM PREVIOUS CHECKPOINT")
+            self.load_cnets(print_str=False)
         eps = self.config.cnet_train_epochs
         best_val_loss = 1e10
         best_val_ep = 0
