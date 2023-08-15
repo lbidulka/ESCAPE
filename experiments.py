@@ -9,6 +9,9 @@ from pathlib import Path
 
 # print("\n", os.getcwd(), "\n", sys.path, "\n")
 
+import optuna
+import json
+
 import numpy as np
 import torch
 from torchvision import transforms as T
@@ -21,6 +24,7 @@ from core.cnet_eval import eval_gt
 from config import get_config
 
 import utils.quick_plot
+from utils.optuna_objectives import optuna_objective
 
 def plot_TTT_loss(config):
     '''
@@ -75,7 +79,7 @@ def print_test_summary(summary):
                     print('{}: {:.2f},'.format(key, diff), end=' ')
         print('\n')
 
-def test(cnet, R_cnet, config):
+def test(cnet, R_cnet, config, print_summary=True):
     # Get HybrIK model if required
     if config.TTT_from_file == False:
         backbone, backbone_cfg = load_hybrik(config)
@@ -105,7 +109,8 @@ def test(cnet, R_cnet, config):
         summary[test_backbone]['vanilla'] = eval_summary['backbone']
         summary[test_backbone]['w/CN'] = eval_summary['corrected']
         if TTT_eval_summary: summary[test_backbone]['+TTT'] = TTT_eval_summary['corrected']
-    print_test_summary(summary)
+    if print_summary: print_test_summary(summary)
+    return summary
 
 def setup_adapt_nets(config):
     ''' Define the adaptation networks CNet and RCNet '''
@@ -138,9 +143,27 @@ def main_worker(config):
             test(cnet, R_cnet, config)
         elif task == 'plot_TTT_loss':
             plot_TTT_loss(config)
+        elif task == 'TTT_optuna':
+            study = optuna.create_study(directions=['minimize', 'minimize'])
+            study.optimize(optuna_objective(config, cnet, R_cnet, test), n_trials=config.optuna_num_trials,)
+
+            print(f"Number of trials on the Pareto front: {len(study.best_trials)}")
+            trial_with_highest_mean = max(study.best_trials, key=lambda t: (t.values[0] + t.values[1])/2)
+            print(f"Trial with highest mean(PA-MPJPE, MPJPE): ")
+            print(f"\tnumber: {trial_with_highest_mean.number}")
+            print(f"\tparams: {trial_with_highest_mean.params}")
+            print(f"\tvalues: {trial_with_highest_mean.values}")
+            
+            log_json = {
+                "number": trial_with_highest_mean.number,
+                "params": trial_with_highest_mean.params,
+                "values": trial_with_highest_mean.values,
+            }
+            json.dump(log_json, open(config.optuna_log_path + 'TTT_best_mean_params.json', 'w'))
+
         else:
             raise NotImplementedError
-    print("All Done!")
+    
 
 if __name__ == "__main__":    
     config = get_config()

@@ -32,30 +32,17 @@ def get_config():
     np.random.seed(config.seed) # For test set random slice
 
     # Main Settings
+    config.optuna_num_trials = 10
     config.print_config = True
     config.use_cnet = True
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
-    
-    config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
-    config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
-    config.cnet_targets = config.distal_kpts
-    config.rcnet_targets_name = ['Hips', 'Shoulders']
-    
-    # config.rcnet_targets = [2, 5]   # LKnee, RKnee
-
-    # get all the entries in the dict, make a combined list
-    config.rcnet_targets = []
-    for name in config.rcnet_targets_name:
-        config.rcnet_targets += RCNET_TARGET_NAMES[name]
-
-    config.use_multi_distal = False  # Indiv. nets for each limb + distal pred
-    config.limbs = ['LA', 'RA', 'LL', 'RL'] # 'LL', 'RL', 'LA', 'RA'    limbs for multi_distal net
     
     config.split_corr_dim_trick = False  # correct z with trained CNet, correct x/y with tuned CNet
 
     config.corr_steps = 1   # How many correction iterations at inference?
     config.corr_step_size = 1.0 # for err pred, what fraction of CNet corr to do
-    config.test_adapt = True
+
+    config.test_adapt = False
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
     config.TTT_from_file = True
     if config.TTT_loss == 'reproj_2d':
@@ -63,8 +50,8 @@ def get_config():
         config.adapt_steps = 5
         config.TTT_errscale = 1e2
     if config.TTT_loss == 'consistency':
-        config.test_adapt_lr = 1e-3
-        config.adapt_steps = 3
+        config.test_adapt_lr = 5e-4
+        config.adapt_steps = 5
         config.TTT_errscale = 1e2
 
     # Tasks
@@ -72,15 +59,17 @@ def get_config():
     #                 'train_CNet', 'make_RCNet_trainset', 'train_RCNet',
     #                 'test', 'plot_TTT_loss'] 
     # config.tasks = ['make_trainsets']
-    # config.tasks = ['train_CNet', 'make_RCNet_trainset', 
-    #                 'train_RCNet', 'test', 'plot_TTT_loss']
-    config.tasks = ['train_CNet', 'test']
+    config.tasks = ['train_CNet', 'make_RCNet_trainset', 
+                    'train_RCNet', 'test', 'plot_TTT_loss']
+    # config.tasks = ['train_CNet', 'test']
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet']
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
-    config.tasks = ['train_RCNet', 'test', 'plot_TTT_loss']
+    # config.tasks = ['train_RCNet', 'test', 'plot_TTT_loss']
     # config.tasks = ['test']
-    config.tasks = ['test', 'plot_TTT_loss']
+    # config.tasks = ['test', 'plot_TTT_loss']
     # config.tasks = ['plot_TTT_loss']
+
+    config.tasks = ['TTT_optuna']
 
     # Fancy Training Options
     config.continue_train_CNet = False
@@ -90,7 +79,7 @@ def get_config():
     config.trainsets = ['MPii', 'HP3D'] # 'MPii', 'HP3D', 
     config.trainsets.sort()
     config.trainsets_str = '_'.join(config.trainsets)
-    config.testset = 'PW3D' # 'HP3D', 'PW3D',
+    config.testset = 'PW3D' 
 
     config.test_eval_limit = 50_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
     if config.testset == 'PW3D':
@@ -102,14 +91,10 @@ def get_config():
         raise NotImplementedError
 
     config.train_backbones = ['bal_mse', 'cliff', 'pare', 'spin', 'hybrik'] # 'spin', 'hybrik', 'cliff', 'pare', 'bal_mse'
-    # config.train_backbones = ['cliff', 'pare',]
-    # config.test_backbones = ['hybrik', 'spin'] # 'spin', 'hybrik', 'pare', 'cliff', 'bal_mse'
     config.test_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse']
 
-    config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
-
     config.backbone_scales = {
-        'spin': 1.0, #0.85,
+        'spin': 1.0,
         'hybrik': 2.2,
         'pare': 1.0,
         'cliff': 1.0,
@@ -117,25 +102,30 @@ def get_config():
     }
     config.mmlab_backbones = ['spin', 'pare', 'cliff', 'bal_mse']
 
+    # Main base baths
+    config.cnet_ckpt_path = '../../ckpts/' #hybrIK/w_{}/'.format(config.trainsets_str)
+    config.cnet_dataset_path = '/data/lbidulka/adapt_3d/'
+    config.optuna_log_path = '../../outputs/optuna/'
+
+    # trainsets
+    config.backbone_trainset_lims = {
+        'hybrik': {'MPii': None, 'HP3D': None}, #50_000,},
+        'spin': {'MPii': None, 'HP3D': None}, #50_000,},
+        'cliff': {'MPii': None,'HP3D': None}, #50_000,},
+        'pare': {'MPii': None, 'HP3D': None}, #50_000,},
+        'bal_mse': {'MPii': None,'HP3D': None}, #50_000,},
+    }
+    config.backbone_trainset_ids = {
+        'hybrik': {'MPii': None, 'HP3D': None},
+    }
+
+    config.hybrIK_version = 'hrw48_wo_3dpw' # 'res34_cam', 'hrw48_wo_3dpw'
     if config.hybrIK_version == 'res34_cam':
         config.hybrik_cfg = 'configs/256x192_adam_lr1e-3-res34_smpl_3d_cam_2x_mix.yaml'
         config.ckpt = 'pretrained_w_cam.pth'
     if config.hybrIK_version == 'hrw48_wo_3dpw':
         config.hybrik_cfg = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_wo_pw3d.yaml'
         config.ckpt = 'hybrik_hrnet48_wo3dpw.pth' 
-
-    # cnet dataset
-    config.cnet_ckpt_path = '../../ckpts/' #hybrIK/w_{}/'.format(config.trainsets_str)
-    config.cnet_dataset_path = '/data/lbidulka/adapt_3d/'
-
-    # trainsets
-    config.backbone_trainset_lims = {
-        'hybrik': {'MPii': None, 'HP3D': 50_000,},
-        'spin': {'MPii': None, 'HP3D': 50_000,},
-        'cliff': {'MPii': None},# 'HP3D': 50_000,},
-        'pare': {'MPii': None, 'HP3D': 50_000,},
-        'bal_mse': {'MPii': None},# 'HP3D': 50_000,},
-    }
 
     config.cnet_trainset_paths = []
     config.cnet_trainset_scales = []
@@ -180,6 +170,18 @@ def get_config():
             config.cnet_testset_scales.append(config.backbone_scales[test_backbone])
             config.cnet_testset_backbones.append(test_backbone)
     
+    # Network inputs
+    config.use_multi_distal = False  # Indiv. nets for each limb + distal pred
+    config.limbs = ['LA', 'RA', 'LL', 'RL'] # 'LL', 'RL', 'LA', 'RA'    limbs for multi_distal net
+    config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
+    config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
+    config.cnet_targets = config.distal_kpts
+    config.rcnet_targets_name = ['Hips', 'Shoulders']
+    # get all the entries in the dict, make a combined list
+    config.rcnet_targets = []
+    for name in config.rcnet_targets_name:
+        config.rcnet_targets += RCNET_TARGET_NAMES[name]
+
     # CUDA
     config.device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     torch.backends.cudnn.enabled = True
