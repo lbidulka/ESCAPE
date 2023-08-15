@@ -143,9 +143,27 @@ def main_worker(config):
             test(cnet, R_cnet, config)
         elif task == 'plot_TTT_loss':
             plot_TTT_loss(config)
-        elif task == 'TTT_optuna':
+        elif task == 'optuna_CNet':
             study = optuna.create_study(directions=['minimize', 'minimize'])
-            study.optimize(optuna_objective(config, cnet, R_cnet, test), n_trials=config.optuna_num_trials,)
+            study.optimize(optuna_objective('CNet', config, cnet, R_cnet, test), n_trials=config.optuna_num_trials,)
+
+            print(f"Number of trials on the Pareto front: {len(study.best_trials)}")
+            trial_with_highest_mean = max(study.best_trials, key=lambda t: (t.values[0] + t.values[1])/2)
+            print(f"Trial with highest mean(PA-MPJPE, MPJPE): ")
+            print(f"\tnumber: {trial_with_highest_mean.number}")
+            print(f"\tparams: {trial_with_highest_mean.params}")
+            print(f"\tvalues: {trial_with_highest_mean.values}")
+            
+            log_json = {
+                "number": trial_with_highest_mean.number,
+                "params": trial_with_highest_mean.params,
+                "values": trial_with_highest_mean.values,
+            }
+            json.dump(log_json, open(config.optuna_log_path + 'CNet_best_mean_params.json', 'w'))
+
+        elif task == 'optuna_TTT':
+            study = optuna.create_study(directions=['minimize', 'minimize'])
+            study.optimize(optuna_objective('TTT', config, cnet, R_cnet, test), n_trials=config.optuna_num_trials,)
 
             print(f"Number of trials on the Pareto front: {len(study.best_trials)}")
             trial_with_highest_mean = max(study.best_trials, key=lambda t: (t.values[0] + t.values[1])/2)

@@ -32,7 +32,7 @@ def get_config():
     np.random.seed(config.seed) # For test set random slice
 
     # Main Settings
-    config.optuna_num_trials = 10
+    config.optuna_num_trials = 5
     config.print_config = True
     config.use_cnet = True
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
@@ -69,7 +69,8 @@ def get_config():
     # config.tasks = ['test', 'plot_TTT_loss']
     # config.tasks = ['plot_TTT_loss']
 
-    config.tasks = ['TTT_optuna']
+    config.tasks = ['optuna_CNet']
+    # config.tasks = ['optuna_TTT']
 
     # Fancy Training Options
     config.continue_train_CNet = False
