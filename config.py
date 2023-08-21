@@ -32,7 +32,7 @@ def get_config():
     np.random.seed(config.seed) # For test set random slice
 
     # Main Settings
-    config.optuna_num_trials = 5
+    config.optuna_num_trials = 1
     config.print_config = True
     config.use_cnet = True
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
@@ -42,7 +42,7 @@ def get_config():
     config.corr_steps = 1   # How many correction iterations at inference?
     config.corr_step_size = 1.0 # for err pred, what fraction of CNet corr to do
 
-    config.test_adapt = False
+    config.test_adapt = True
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
     config.TTT_from_file = True
     if config.TTT_loss == 'reproj_2d':
@@ -51,28 +51,30 @@ def get_config():
         config.TTT_errscale = 1e2
     if config.TTT_loss == 'consistency':
         config.test_adapt_lr = 5e-4
-        config.adapt_steps = 5
+        config.adapt_steps = 3
         config.TTT_errscale = 1e2
 
     # Tasks
     # config.tasks = ['make_trainsets', 'make_testset', 
     #                 'train_CNet', 'make_RCNet_trainset', 'train_RCNet',
     #                 'test', 'plot_TTT_loss'] 
-    # config.tasks = ['make_trainsets']
     config.tasks = ['train_CNet', 'make_RCNet_trainset', 
                     'train_RCNet', 'test', 'plot_TTT_loss']
-    # config.tasks = ['train_CNet', 'test']
+    config.tasks = ['train_CNet', 'test']
+    # config.tasks = ['make_RCNet_trainset']
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet']
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
-    # config.tasks = ['train_RCNet', 'test', 'plot_TTT_loss']
+    config.tasks = ['train_RCNet', 'test', 'plot_TTT_loss']
     # config.tasks = ['test']
-    # config.tasks = ['test', 'plot_TTT_loss']
+    config.tasks = ['test', 'plot_TTT_loss']
     # config.tasks = ['plot_TTT_loss']
+    config.tasks = ['plot_TTT_train_corr']
 
-    config.tasks = ['optuna_CNet']
+    # config.tasks = ['optuna_CNet']
     # config.tasks = ['optuna_TTT']
 
     # Fancy Training Options
+    config.sample_weighting = False
     config.continue_train_CNet = False
     config.continue_train_RCNet = False
 
@@ -82,7 +84,7 @@ def get_config():
     config.trainsets_str = '_'.join(config.trainsets)
     config.testset = 'PW3D' 
 
-    config.test_eval_limit = 50_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
+    config.test_eval_limit =  500 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
     if config.testset == 'PW3D':
         config.EVAL_JOINTS = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
         config.EVAL_JOINTS.sort()
@@ -110,11 +112,11 @@ def get_config():
 
     # trainsets
     config.backbone_trainset_lims = {
-        'hybrik': {'MPii': None, 'HP3D': None}, #50_000,},
-        'spin': {'MPii': None, 'HP3D': None}, #50_000,},
-        'cliff': {'MPii': None,'HP3D': None}, #50_000,},
-        'pare': {'MPii': None, 'HP3D': None}, #50_000,},
-        'bal_mse': {'MPii': None,'HP3D': None}, #50_000,},
+        'hybrik': {'MPii': None, 'HP3D': None}, # 50_000,},
+        'spin': {'MPii': None, 'HP3D': None}, # 50_000,},
+        'cliff': {'MPii': None,'HP3D': None}, # 50_000,},
+        'pare': {'MPii': None, 'HP3D': None}, # 50_000,},
+        'bal_mse': {'MPii': None,'HP3D': None}, # 50_000,},
     }
     config.backbone_trainset_ids = {
         'hybrik': {'MPii': None, 'HP3D': None},
@@ -131,6 +133,7 @@ def get_config():
     config.cnet_trainset_paths = []
     config.cnet_trainset_scales = []
     config.train_datalims = []
+    config.train_backbone_list = []
     for train_backbone in config.train_backbones:
         for trainset in config.trainsets:
             path = None
@@ -147,6 +150,7 @@ def get_config():
                 config.cnet_trainset_paths.append(path)
                 config.cnet_trainset_scales.append(config.backbone_scales[train_backbone])
                 config.train_datalims.append(trainlim)
+                config.train_backbone_list.append(train_backbone)
 
     # testsets
     config.cnet_testset_paths = []

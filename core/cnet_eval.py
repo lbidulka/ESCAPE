@@ -102,7 +102,8 @@ def eval_gt(cnet, R_cnet, config,
             m=None, gt_eval_dataset=None, 
             testset_path=None, backbone_scale=1.0,
             test_cnet=False, test_adapt=False, 
-            use_data_file=False, mmlab_out=False):
+            use_data_file=False, mmlab_out=False,
+            subset=None,):
     '''
     '''
     if test_adapt:
@@ -116,10 +117,9 @@ def eval_gt(cnet, R_cnet, config,
         else:
             test_file = testset_path
         test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
-        if config.test_adapt and (use_data_file == True):
-            test_data = test_data[:config.test_eval_limit]
-        else:
-            test_data = test_data[config.test_eval_subset, :]
+        if subset is None: 
+            subset = config.test_eval_subset
+        test_data = test_data[subset, :]
         test_data *= backbone_scale
         gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
     gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False, 
@@ -204,21 +204,12 @@ def eval_gt(cnet, R_cnet, config,
         losses = np.array(losses)
         # save losses
         TTT_losses_outpath = '../../outputs/TTT_losses/'
+        dataset_name = testset_path.split('/')[-2]
+        if dataset_name != 'PW3D':
+            TTT_losses_outpath += dataset_name + '_'
         backbone_name = testset_path.split('/')[-1].split('.')[-2]
         TTT_losses_outpath +=  '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
         np.save(TTT_losses_outpath, losses)
-        # if config.TTT_loss == 'consistency':
-            # utils.quick_plot.simple_2d_plot(losses, save_dir='../../outputs/testset/Knees_losses_consist.png', 
-            #                                 title='Knees Consist. Loss vs GT 3D distals MSE', 
-            #                                 xlabel='Consistency Loss', ylabel='GT 3D MSE Loss for Distals',
-            #                                 # x_lim=[0, 25], y_lim=[0, 7500])
-            #                                 # x_lim=[0, 1000], y_lim=[0, 7500])
-            #                                 x_lim=[0, 100], y_lim=[0, 750])
-        # if config.TTT_loss == 'reproj_2d':
-            # utils.quick_plot.simple_2d_plot(losses, save_dir='../../outputs/testset/losses_2d.png', 
-            #                                 title='2D reproj. Loss vs GT 3D distals MSE', 
-            #                                 xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss for Distals',
-            #                                 x_lim=[0,1], y_lim=[0, 7500])
 
     # save updated file for mmlab eval (preds, gts, ids)
     if mmlab_out:

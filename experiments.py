@@ -2,6 +2,7 @@
 import os
 import sys
 from pathlib import Path
+import pickle
 
 # path_root = Path(__file__)#.parents[3]
 # sys.path.append(str(path_root))
@@ -26,11 +27,12 @@ from config import get_config
 import utils.quick_plot
 from utils.optuna_objectives import optuna_objective
 
-def plot_TTT_loss(config):
+def plot_TTT_loss(config, task='test'):
     '''
-    Loads up the losses from the testset and plots them
+    Loads up the losses and plots them
     '''
     print("Plotting TTT Losses...")
+    loss_paths = config.cnet_testset_paths if task == 'test' else config.cnet_trainset_paths
     # combine rcnet target names
     rcnet_targets_name = ''
     for target in config.rcnet_targets_name:
@@ -38,17 +40,22 @@ def plot_TTT_loss(config):
     TTT_losses_outpath = '../../outputs/TTT_losses/'
     losses = []
     # iterate overall all backbones 
-    for test_path in config.cnet_testset_paths:
-        backbone_name = test_path.split('/')[-1].split('.')[-2]
-        loss_path = TTT_losses_outpath + '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
+    for out_path in loss_paths:
+        backbone_name = out_path.split('/')[-1].split('.')[-2]
+        dataset_name = out_path.split('/')[-2]
+        loss_path = TTT_losses_outpath
+        if dataset_name != 'PW3D':
+            loss_path += dataset_name + '_'
+        loss_path += '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
         bb_losses = np.load(loss_path)
         losses.append(bb_losses)
     losses = np.concatenate(losses)
 
-    save_dir = '../../outputs/testset/'
+    save_dir = '../../outputs/testset/test_' if task == 'test' else '../../outputs/trainset/train_'
+    title = 'Testset ' if task == 'test' else 'Trainset '
     if config.TTT_loss == 'consistency':
         save_dir += rcnet_targets_name + '_consist_losses.png'
-        title = rcnet_targets_name + ' Consist. Loss vs GT 3D MSE'
+        title += rcnet_targets_name + ' Consist. Loss vs GT 3D MSE'
         utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
                                         xlabel='Consistency Loss', ylabel='GT 3D MSE Loss',
                                         # x_lim=[0, 25], y_lim=[0, 7500])
@@ -56,10 +63,56 @@ def plot_TTT_loss(config):
                                         x_lim=[0, 50], y_lim=[0, 250])
     if config.TTT_loss == 'reproj_2d':
         save_dir += rcnet_targets_name + '_reproj_2d_losses.png'
-        title = rcnet_targets_name + ' 2D reproj. Loss vs GT 3D MSE'
+        title += rcnet_targets_name + ' 2D reproj. Loss vs GT 3D MSE'
         utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
                                         xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss',
                                         x_lim=[0,1], y_lim=[0, 7500])
+
+def plot_TTT_train_corr(cnet, R_cnet, config, print_summary=True):
+    if not config.test_adapt or not (config.TTT_loss == 'consistency'):
+        raise NotImplementedError
+    # Get HybrIK model if required
+    if config.TTT_from_file == False:
+        raise NotImplementedError
+    else:
+        backbone, backbone_cfg, testset = None, None, None
+    # Load CNet & R-CNet, then test
+    if backbone is not None: backbone.to(config.device)
+
+    subsets = []
+    for trainpath in config.cnet_trainset_paths:
+        data = torch.from_numpy(np.load(trainpath)).float().permute(1,0,2)
+        set_len = data.shape[0]
+        subset = np.random.choice(set_len, 
+                                  min(config.test_eval_limit, set_len), 
+                                  replace=False)
+        subsets.append(subset)
+
+    summary = {}
+    for train_path, train_backbone, subset in zip(config.cnet_trainset_paths, 
+                                  config.train_backbone_list, 
+                                  subsets):
+        train_scale = 2.2 if train_backbone == 'hybrik' else 1.0
+        summary[train_backbone] = {}
+        TTT_eval_summary = None
+        cnet.load_cnets(print_str=False)
+        R_cnet.load_cnets(print_str=False)
+        TTT_eval_summary = eval_gt(cnet, R_cnet, config, backbone, testset, 
+                                    testset_path=train_path, backbone_scale=train_scale, 
+                                    test_cnet=True, test_adapt=True, subset=subset,
+                                    use_data_file=config.TTT_from_file)
+        
+        cnet.load_cnets(print_str=False)
+        eval_summary = eval_gt(cnet, R_cnet, config, testset, backbone, 
+                               testset_path=train_path, backbone_scale=train_scale, test_cnet=True, 
+                               subset=subset, use_data_file=True)
+        summary[train_backbone]['vanilla'] = eval_summary['backbone']
+        summary[train_backbone]['w/CN'] = eval_summary['corrected']
+        summary[train_backbone]['+TTT'] = TTT_eval_summary['corrected']
+    if print_summary: print_test_summary(summary)
+
+    plot_TTT_loss(config, task='train')
+        
 
 def print_test_summary(summary):
     '''
@@ -143,6 +196,8 @@ def main_worker(config):
             test(cnet, R_cnet, config)
         elif task == 'plot_TTT_loss':
             plot_TTT_loss(config)
+        elif task == 'plot_TTT_train_corr':
+            plot_TTT_train_corr(cnet, R_cnet, config,)
         elif task == 'optuna_CNet':
             study = optuna.create_study(directions=['minimize', 'minimize'])
             study.optimize(optuna_objective('CNet', config, cnet, R_cnet, test), n_trials=config.optuna_num_trials,)
@@ -160,6 +215,8 @@ def main_worker(config):
                 "values": trial_with_highest_mean.values,
             }
             json.dump(log_json, open(config.optuna_log_path + 'CNet_best_mean_params.json', 'w'))
+            with open(config.optuna_log_path + 'CNet_study.pkl', 'wb') as file: 
+                pickle.dump(study, file)
 
         elif task == 'optuna_TTT':
             study = optuna.create_study(directions=['minimize', 'minimize'])
@@ -178,6 +235,8 @@ def main_worker(config):
                 "values": trial_with_highest_mean.values,
             }
             json.dump(log_json, open(config.optuna_log_path + 'TTT_best_mean_params.json', 'w'))
+            with open(config.optuna_log_path + 'TTT_study.pkl', 'wb') as file: 
+                pickle.dump(study, file)
 
         else:
             raise NotImplementedError
