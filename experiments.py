@@ -60,7 +60,7 @@ def plot_TTT_loss(config, task='test'):
                                         xlabel='Consistency Loss', ylabel='GT 3D MSE Loss',
                                         # x_lim=[0, 25], y_lim=[0, 7500])
                                         # x_lim=[0, 1000], y_lim=[0, 7500])
-                                        x_lim=[0, 50], y_lim=[0, 250])
+                                        x_lim=[0, 25], y_lim=[0, 250])
     if config.TTT_loss == 'reproj_2d':
         save_dir += rcnet_targets_name + '_reproj_2d_losses.png'
         title += rcnet_targets_name + ' 2D reproj. Loss vs GT 3D MSE'
@@ -88,12 +88,24 @@ def plot_TTT_train_corr(cnet, R_cnet, config, print_summary=True):
                                   replace=False)
         subsets.append(subset)
 
+    # small function to update the dict with mean of new value and old value
+    def update_bb_summary(bb_summary, test_key, new_vals):
+        # new_vals has keys: [PA-MPJPE, MPJPE, x, y, z]
+        if test_key not in bb_summary.keys():
+            bb_summary[test_key] = {}
+        for k in new_vals.keys():
+            if k not in bb_summary[test_key].keys():
+                bb_summary[test_key][k] = new_vals[k]
+            else:
+                bb_summary[test_key][k] = (bb_summary[test_key][k] + new_vals[k])/2
+
     summary = {}
     for train_path, train_backbone, subset in zip(config.cnet_trainset_paths, 
                                   config.train_backbone_list, 
                                   subsets):
         train_scale = 2.2 if train_backbone == 'hybrik' else 1.0
-        summary[train_backbone] = {}
+        if train_backbone not in summary.keys():
+            summary[train_backbone] = {}
         TTT_eval_summary = None
         cnet.load_cnets(print_str=False)
         R_cnet.load_cnets(print_str=False)
@@ -106,9 +118,11 @@ def plot_TTT_train_corr(cnet, R_cnet, config, print_summary=True):
         eval_summary = eval_gt(cnet, R_cnet, config, testset, backbone, 
                                testset_path=train_path, backbone_scale=train_scale, test_cnet=True, 
                                subset=subset, use_data_file=True)
-        summary[train_backbone]['vanilla'] = eval_summary['backbone']
-        summary[train_backbone]['w/CN'] = eval_summary['corrected']
-        summary[train_backbone]['+TTT'] = TTT_eval_summary['corrected']
+        
+        update_bb_summary(summary[train_backbone], 'vanilla', eval_summary['backbone'])
+        update_bb_summary(summary[train_backbone], 'w/CN', eval_summary['corrected'])
+        update_bb_summary(summary[train_backbone], '+TTT', TTT_eval_summary['corrected'])
+
     if print_summary: print_test_summary(summary)
 
     plot_TTT_loss(config, task='train')
@@ -120,16 +134,17 @@ def print_test_summary(summary):
         summary: dict of dicts, where each dict is a summary of the testset using a different backbone
     '''
     print('\n##### TEST SUMMARY #####')
+    print('P1: PA-MPJPE, P2: MPJPE')
     for backbone in summary.keys():
         print('-- {}: --'.format(backbone), end=' ')
         for test in summary[backbone].keys():
             print('\n   {}:    '.format(test if test == 'vanilla' else ('   ' + test)), end=' ')
             for key in summary[backbone][test].keys():
                 if test == 'vanilla': 
-                    print('{}: {:.2f},'.format(key, summary[backbone][test][key]), end=' ')
+                    print('{}: {:7.2f},'.format(key, summary[backbone][test][key]), end=' ')
                 else:
                     diff = summary[backbone][test][key] - summary[backbone]['vanilla'][key]
-                    print('{}: {:.2f},'.format(key, diff), end=' ')
+                    print('{}: {:7.2f},'.format(key, diff), end=' ')
         print('\n')
 
 def test(cnet, R_cnet, config, print_summary=True):
@@ -171,11 +186,11 @@ def setup_adapt_nets(config):
         cnet = multi_distal(config)
         R_cnet = None # TODO: MULTI-DISTAL R-CNET
     else:
-        cnet = adapt_net(config, target_kpts=config.cnet_targets,
-                        in_kpts=[kpt for kpt in range(17) if kpt not in [9,10]])
+        cnet = adapt_net(config, target_kpts=config.cnet_targets,)
+                        # in_kpts=[kpt for kpt in range(17) if kpt not in [9,10]])
         R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
-                           R=True,
-                           in_kpts=[kpt for kpt in range(17) if kpt not in [9,10]])
+                           R=True,)
+                        #    in_kpts=[kpt for kpt in range(17) if kpt not in [9,10]])
                         #    in_kpts=[kpt for kpt in range(17) if kpt not in config.rcnet_targets])
     return cnet, R_cnet
 

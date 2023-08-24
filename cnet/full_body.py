@@ -16,7 +16,7 @@ class adapt_net():
                 target_kpts=[3, 6, 13, 16,], 
                 in_kpts=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
                 R=False,    # R-CNet ?
-                lr=None, eps=None,
+                lr=None, eps=None, num_stages=None, lin_size=None,
                 ) -> None:
         self.config = copy.copy(config)
         self.device = self.config.device
@@ -41,23 +41,31 @@ class adapt_net():
 
         self.in_kpts.sort()
 
+        net_lin_size = 512 if not lin_size else lin_size
+
         # Nets
         if R:
+            net_num_stages = 2 if not num_stages else num_stages
+            
             self.continue_train = True if self.config.continue_train_RCNet else False
-            self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5, 
+            self.cnet = BaselineModel(linear_size=net_lin_size, num_stages=net_num_stages, p_dropout=0.5, 
                                   num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
-            self.config.cnet_train_epochs = 3 if not eps else eps #4
-            self.config.lr = 5e-4 if not lr else lr
+            self.config.cnet_train_epochs = 8 if not eps else eps #3
+            self.config.lr = 1e-4 if not lr else lr # 5e-4
         else:
+            net_num_stages = 2 if not num_stages else num_stages
+
             self.continue_train = True if self.config.continue_train_CNet else False
-            self.cnet = BaselineModel(linear_size=512, num_stages=2, p_dropout=0.5, 
+            self.cnet = BaselineModel(linear_size=net_lin_size, num_stages=net_num_stages, p_dropout=0.5, 
                                     num_in_kpts=len(self.in_kpts), num_out_kpts=len(self.target_kpts)).to(self.device)
             self.config.cnet_train_epochs = 5 if not eps else eps
-            self.config.lr = 5e-5 if not lr else lr #5e-4
+            self.config.lr = 5e-4 if not lr else lr #5e-4
         
         # Training
-        self.config.train_split = 0.85
+        self.config.train_split = 1.0
         self.config.err_scale = 1000
+
+        self.use_valset = False if self.config.train_split == 1.0 else True
 
         # self.config.weight_decay = 1e-3
         self.config.batch_size = 4096
@@ -65,7 +73,7 @@ class adapt_net():
         self.config.ep_print_freq = 5
 
         self.optimizer = torch.optim.Adam(self.cnet.parameters(), lr=self.config.lr)#, weight_decay=self.config.weight_decay)
-        self.criterion = nn.MSELoss()
+        self.criterion = nn.MSELoss(reduction='none')
 
     def _loss(self, backbone_pred, cnet_out, target_xyz_17):
         '''
@@ -76,8 +84,11 @@ class adapt_net():
         else:
             cnet_target = target_xyz_17.clone() # predict kpts
         cnet_target = torch.flatten(cnet_target[:, self.target_kpts, :], start_dim=1)
-        loss = self.criterion(cnet_out, cnet_target*self.config.err_scale)
-        return loss
+        loss = self.criterion(cnet_out, cnet_target*self.config.err_scale).mean(dim=1)
+        if self.config.sample_weighting:
+            sample_ws = torch.sigmoid((cnet_target).norm(2, dim=1, keepdim=True).mean(dim=1))   # cnet_target.norm(2, dim=1, keepdim=True).mean(dim=1)
+            loss *= sample_ws
+        return loss.mean()
 
     def _corr(self, backbone_pred):
         '''
@@ -108,8 +119,9 @@ class adapt_net():
         '''
         self.config.train_data_ids = []
         data_train, data_val = [], []
-        for i, (trainset_path, backbone_scale) in enumerate(zip(self.config.cnet_trainset_paths,
-                                                                self.config.cnet_trainset_scales)):
+        for i, (trainset_path, backbone_scale, data_lim) in enumerate(zip(self.config.cnet_trainset_paths,
+                                                                self.config.cnet_trainset_scales,
+                                                                self.config.train_datalims)):
             if self.R:
                 trainset_path = trainset_path.replace('cnet', 'rcnet')
             data = torch.from_numpy(np.load(trainset_path)).float()
@@ -118,12 +130,12 @@ class adapt_net():
                 idx = np.where(data[1,:,:].sum(axis=1) != 0)
                 data = data[:, idx, :]
                 data = data.squeeze()
-            if self.config.train_datalims[i] is not None:
+            if data_lim is not None:
                 # get random subset of data
                 self.config.train_data_ids.append(np.random.choice(data.shape[1], 
-                                                                   min(self.config.train_datalims[i], data.shape[1]), 
+                                                                   min(data_lim, data.shape[1]), 
                                                                    replace=False))
-                data = data[:, self.config.train_data_ids[i], :]
+                data = data[:, self.config.train_data_ids[-1], :]
             # scale according to the backbone
             data[:2] *= backbone_scale
 
@@ -145,7 +157,11 @@ class adapt_net():
             data_val.append(data_v[:3])
 
         data_train = torch.cat(data_train, dim=1)
-        data_val = torch.cat(data_val, dim=1)  
+        data_val = torch.cat(data_val, dim=1) 
+
+        if self.use_valset == False:
+            # single dummy sample
+            data_val = torch.ones_like(data_train[:, -1:, :])*-99
 
         return data_train, data_val
 
@@ -188,34 +204,44 @@ class adapt_net():
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 cnet_train_losses.append(loss.item())
-            # Val
-            self.cnet.eval()
-            with torch.no_grad():
-                cnet_val_losses = []
-                for batch_idx, data in enumerate(gt_valloader):
-                    backbone_pred = data[:, 0, :].to(self.device)
-                    target_xyz_17 = data[:, 1, :].to(self.device)
-                    inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
-                    out = self.cnet(inp)
-                    loss = self._loss(backbone_pred, out, target_xyz_17)
-                    cnet_val_losses.append(loss.item())
-                
             mean_train_loss = np.mean(cnet_train_losses)
-            mean_val_loss = np.mean(cnet_val_losses)
+            # Val
+            if self.use_valset:
+                self.cnet.eval()
+                with torch.no_grad():
+                    cnet_val_losses = []
+                    for batch_idx, data in enumerate(gt_valloader):
+                        backbone_pred = data[:, 0, :].to(self.device)
+                        target_xyz_17 = data[:, 1, :].to(self.device)
+                        inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
+                        out = self.cnet(inp)
+                        loss = self._loss(backbone_pred, out, target_xyz_17)
+                        cnet_val_losses.append(loss.item())
+                mean_val_loss = np.mean(cnet_val_losses)
+            else:
+                mean_val_loss = best_val_loss - 1
             # print on some epochs
             print_ep = ep % self.config.ep_print_freq == 0
+            out_str = f"EP {ep}:    t_loss: {mean_train_loss:.5f} "
+            if self.use_valset:
+                out_str += f"   v_loss: {mean_val_loss:.5f}"
+
             if print_ep:
-                print(f"EP {ep}:    t_loss: {mean_train_loss:.5f}    v_loss: {mean_val_loss:.5f}")#, end='')
+                print(out_str)#, end='')
             
             if mean_val_loss < best_val_loss:
                 if not print_ep:
-                    print(f"EP {ep}:    t_loss: {mean_train_loss:.5f}    v_loss: {mean_val_loss:.5f}", end='')
-                print("    ---> best val loss so far, ", end='')
+                    print(out_str, end='')
+                if self.use_valset: 
+                    print("    ---> best val loss so far, ", end='')
                 self.save(self.config.cnet_ckpt_path + self.config.ckpt_name)
                 best_val_loss = mean_val_loss
                 best_val_ep = ep
 
-        print(f"EP {ep}:    t_loss: {mean_train_loss:.5f}    v_loss: {mean_val_loss:.5f}")
+        out_str = f"EP {ep}:    t_loss: {mean_train_loss:.5f} "
+        if self.use_valset:
+            out_str += f"   v_loss: {mean_val_loss:.5f}"
+        print(out_str)
         print("|| Best val loss: {:.5f} at ep: {} ||".format(best_val_loss, best_val_ep))
         return
     

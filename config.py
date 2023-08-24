@@ -34,6 +34,7 @@ def get_config():
     # Main Settings
     config.optuna_num_trials = 1
     config.print_config = True
+    config.err_binned_results = True
     config.use_cnet = True
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
     
@@ -50,8 +51,8 @@ def get_config():
         config.adapt_steps = 5
         config.TTT_errscale = 1e2
     if config.TTT_loss == 'consistency':
-        config.test_adapt_lr = 5e-4
-        config.adapt_steps = 3
+        config.test_adapt_lr = 2e-4 # 5e-4
+        config.adapt_steps = 5
         config.TTT_errscale = 1e2
 
     # Tasks
@@ -63,12 +64,15 @@ def get_config():
     config.tasks = ['train_CNet', 'test']
     # config.tasks = ['make_RCNet_trainset']
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet']
-    # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
-    config.tasks = ['train_RCNet', 'test', 'plot_TTT_loss']
-    # config.tasks = ['test']
-    config.tasks = ['test', 'plot_TTT_loss']
+    config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
+    # config.tasks = ['train_RCNet', 'test', 'plot_TTT_loss']
+    config.tasks = ['test']
+
+    # config.tasks = ['train_RCNet', 'plot_TTT_train_corr']
+    config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss', 'plot_TTT_train_corr']
+    # config.tasks = ['test', 'plot_TTT_loss',]
     # config.tasks = ['plot_TTT_loss']
-    config.tasks = ['plot_TTT_train_corr']
+    # config.tasks = ['plot_TTT_train_corr']
 
     # config.tasks = ['optuna_CNet']
     # config.tasks = ['optuna_TTT']
@@ -84,7 +88,7 @@ def get_config():
     config.trainsets_str = '_'.join(config.trainsets)
     config.testset = 'PW3D' 
 
-    config.test_eval_limit =  500 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
+    config.test_eval_limit = 3000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
     if config.testset == 'PW3D':
         config.EVAL_JOINTS = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
         config.EVAL_JOINTS.sort()
@@ -93,8 +97,11 @@ def get_config():
     else:
         raise NotImplementedError
 
-    config.train_backbones = ['bal_mse', 'cliff', 'pare', 'spin', 'hybrik'] # 'spin', 'hybrik', 'cliff', 'pare', 'bal_mse'
-    config.test_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse']
+    # config.train_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse'] # 'spin', 'hybrik', 'cliff', 'pare', 'bal_mse'
+    config.train_backbones = ['cliff',]
+    # config.train_backbones = ['hybrik', 'pare', 'cliff', 'bal_mse'] # 'spin', 'hybrik', 'cliff', 'pare', 'bal_mse'
+    # config.test_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse']
+    config.test_backbones = ['cliff',]
 
     config.backbone_scales = {
         'spin': 1.0,
@@ -112,7 +119,7 @@ def get_config():
 
     # trainsets
     config.backbone_trainset_lims = {
-        'hybrik': {'MPii': None, 'HP3D': None}, # 50_000,},
+        'hybrik': {'MPii': None, 'HP3D': None}, # 50_000, None},
         'spin': {'MPii': None, 'HP3D': None}, # 50_000,},
         'cliff': {'MPii': None,'HP3D': None}, # 50_000,},
         'pare': {'MPii': None, 'HP3D': None}, # 50_000,},
