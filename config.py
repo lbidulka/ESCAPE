@@ -31,6 +31,27 @@ def get_config():
     config.seed = np.random.randint(0, 1000)
     np.random.seed(config.seed) # For test set random slice
 
+    # Tasks
+    # config.tasks = ['make_trainsets', 'make_testset', 
+    #                 'train_CNet', 'make_RCNet_trainset', 'train_RCNet',
+    #                 'test', 'plot_TTT_loss'] 
+    # config.tasks = ['train_CNet', 'make_RCNet_trainset', 
+    #                 'train_RCNet', 'test', 'plot_TTT_loss']
+    # config.tasks = ['make_kpt_amass']
+    config.tasks = ['pretrain_CNet', 'test', 'train_CNet', 'test']
+    # config.tasks = ['pretrain_CNet']
+    # config.tasks = ['pretrain_RCNet']
+    config.tasks = ['train_CNet', 'test']
+    
+    config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
+    # config.tasks = ['test']
+
+    # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss', 'plot_TTT_train_corr']
+    # config.tasks = ['test', 'plot_TTT_loss',]
+
+    # config.tasks = ['optuna_CNet']
+    # config.tasks = ['optuna_TTT']
+
     # Main Settings
     config.optuna_num_trials = 1
     config.print_config = True
@@ -38,11 +59,21 @@ def get_config():
     config.use_cnet = True
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
     
-    config.split_corr_dim_trick = False  # correct z with trained CNet, correct x/y with tuned CNet
+    config.split_corr_dim_trick = False
+    config.split_corr_dim = 0   # which dim to not correct with RCNet
 
     config.corr_steps = 1   # How many correction iterations at inference?
     config.corr_step_size = 1.0 # for err pred, what fraction of CNet corr to do
 
+    # Fancy Training Options
+    config.pretrain_AMASS = False        # use pretrain networks on AMASS?
+    config.AMASS_scale = 0.4            # scale AMASS data by this factor when getting kpts
+    config.loss_pose_scaling = False
+    config.sample_weighting = False
+    config.continue_train_CNet = False
+    config.continue_train_RCNet = False
+    
+    # TTT
     config.test_adapt = True
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
     config.TTT_from_file = True
@@ -51,36 +82,13 @@ def get_config():
         config.adapt_steps = 5
         config.TTT_errscale = 1e2
     if config.TTT_loss == 'consistency':
-        config.test_adapt_lr = 2e-4 # 5e-4
-        config.adapt_steps = 5
+        if config.pretrain_AMASS:
+            config.test_adapt_lr = 2e-4 # 5e-4
+            config.adapt_steps = 2 
+        else:
+            config.test_adapt_lr = 2e-4 # 5e-4
+            config.adapt_steps = 2
         config.TTT_errscale = 1e2
-
-    # Tasks
-    # config.tasks = ['make_trainsets', 'make_testset', 
-    #                 'train_CNet', 'make_RCNet_trainset', 'train_RCNet',
-    #                 'test', 'plot_TTT_loss'] 
-    config.tasks = ['train_CNet', 'make_RCNet_trainset', 
-                    'train_RCNet', 'test', 'plot_TTT_loss']
-    config.tasks = ['train_CNet', 'test']
-    # config.tasks = ['make_RCNet_trainset']
-    # config.tasks = ['make_RCNet_trainset', 'train_RCNet']
-    config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
-    # config.tasks = ['train_RCNet', 'test', 'plot_TTT_loss']
-    config.tasks = ['test']
-
-    # config.tasks = ['train_RCNet', 'plot_TTT_train_corr']
-    config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss', 'plot_TTT_train_corr']
-    # config.tasks = ['test', 'plot_TTT_loss',]
-    # config.tasks = ['plot_TTT_loss']
-    # config.tasks = ['plot_TTT_train_corr']
-
-    # config.tasks = ['optuna_CNet']
-    # config.tasks = ['optuna_TTT']
-
-    # Fancy Training Options
-    config.sample_weighting = False
-    config.continue_train_CNet = False
-    config.continue_train_RCNet = False
 
     # Data
     config.trainsets = ['MPii', 'HP3D'] # 'MPii', 'HP3D', 
@@ -88,7 +96,7 @@ def get_config():
     config.trainsets_str = '_'.join(config.trainsets)
     config.testset = 'PW3D' 
 
-    config.test_eval_limit = 3000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
+    config.test_eval_limit = 6_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
     if config.testset == 'PW3D':
         config.EVAL_JOINTS = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
         config.EVAL_JOINTS.sort()
@@ -115,7 +123,11 @@ def get_config():
     # Main base baths
     config.cnet_ckpt_path = '../../ckpts/' #hybrIK/w_{}/'.format(config.trainsets_str)
     config.cnet_dataset_path = '/data/lbidulka/adapt_3d/'
+    config.pose_datasets_path = '/data/lbidulka/pose_datasets/'
     config.optuna_log_path = '../../outputs/optuna/'
+
+    config.amass_path = config.pose_datasets_path + 'AMASS/processed_AMASS.npz'
+    config.amass_kpts_path = config.pose_datasets_path + 'AMASS/processed_AMASS_kpts.npz'
 
     # trainsets
     config.backbone_trainset_lims = {

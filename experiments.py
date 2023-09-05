@@ -26,6 +26,7 @@ from config import get_config
 
 import utils.quick_plot
 from utils.optuna_objectives import optuna_objective
+from utils.AMASS import make_amass_kpts
 
 def plot_TTT_loss(config, task='test'):
     '''
@@ -60,13 +61,13 @@ def plot_TTT_loss(config, task='test'):
                                         xlabel='Consistency Loss', ylabel='GT 3D MSE Loss',
                                         # x_lim=[0, 25], y_lim=[0, 7500])
                                         # x_lim=[0, 1000], y_lim=[0, 7500])
-                                        x_lim=[0, 25], y_lim=[0, 250])
+                                        x_lim=[0, 20], y_lim=[0, 200], alpha=0.15)
     if config.TTT_loss == 'reproj_2d':
         save_dir += rcnet_targets_name + '_reproj_2d_losses.png'
         title += rcnet_targets_name + ' 2D reproj. Loss vs GT 3D MSE'
         utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
                                         xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss',
-                                        x_lim=[0,1], y_lim=[0, 7500])
+                                        x_lim=[0,1], y_lim=[0, 7500], alpha=0.1)
 
 def plot_TTT_train_corr(cnet, R_cnet, config, print_summary=True):
     if not config.test_adapt or not (config.TTT_loss == 'consistency'):
@@ -187,6 +188,7 @@ def setup_adapt_nets(config):
         R_cnet = None # TODO: MULTI-DISTAL R-CNET
     else:
         cnet = adapt_net(config, target_kpts=config.cnet_targets,)
+                        # in_kpts=[kpt for kpt in range(17) if kpt not in config.cnet_targets])
                         # in_kpts=[kpt for kpt in range(17) if kpt not in [9,10]])
         R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
                            R=True,)
@@ -201,12 +203,18 @@ def main_worker(config):
             make_hybrik_pred_dataset(config, 'train')
         elif task == 'make_testset':
             make_hybrik_pred_dataset(config, 'test')
+        elif task == 'make_kpt_amass':
+            make_amass_kpts(config)
+        elif task == 'pretrain_CNet':
+            cnet.train(pretrain_AMASS=True)
         elif task == 'train_CNet':
-            cnet.train()
+            cnet.train(continue_train=config.pretrain_AMASS)
         elif task == 'make_RCNet_trainset':
             cnet.write_train_preds()
+        elif task == 'pretrain_RCNet':
+            R_cnet.train(pretrain_AMASS=True)
         elif task == 'train_RCNet':
-            R_cnet.train()
+            R_cnet.train(continue_train=config.pretrain_AMASS)
         elif task == 'test':
             test(cnet, R_cnet, config)
         elif task == 'plot_TTT_loss':
