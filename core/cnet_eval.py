@@ -162,12 +162,12 @@ def eval_gt(cnet, R_cnet, config,
                                                     lr=config.test_adapt_lr)
                     cnet_in = backbone_pred.detach().clone()
                     for i in range(config.adapt_steps):
+                        optimizer.zero_grad()
                         corrected_pred = cnet(cnet_in)
                         Rcnet_pred = R_cnet(corrected_pred)
                         loss = cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d)
                         loss.backward()
                         optimizer.step()
-                        optimizer.zero_grad()
 
                         gt_3d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)
                         # gt_mse = torch.square((backbone_pred[:,config.distal_kpts,:] - gt_3d[:,config.distal_kpts])*config.TTT_errscale).mean()
@@ -179,8 +179,7 @@ def eval_gt(cnet, R_cnet, config,
                     cnet_in = backbone_pred
                     corrected_pred = cnet(cnet_in)
                     if test_adapt and config.split_corr_dim_trick:
-                        # correct z with initial CNet, leaving x/y corrected with tuned CNet
-                        corrected_pred[:, :, 2] = corrected_pred_init[:, :, 2]
+                        corrected_pred[:, :, config.split_corr_dim] = corrected_pred_init[:, :, config.split_corr_dim]
                 corrected_pred = corrected_pred.reshape(labels['target_xyz_17'].shape[0], -1)
                 output.pred_xyz_jts_17 = corrected_pred
             else:
@@ -255,36 +254,29 @@ def eval_gt(cnet, R_cnet, config,
         corr_err[i,1] = np.abs(corr_pred[:,1] - gt[:,1]).mean()
         corr_err[i,2] = np.abs(corr_pred[:,2] - gt[:,2]).mean()
 
-    num_tail5 = int(0.05*backbone_pa_mpjpe.shape[0])
-    num_tail10 = int(0.10*backbone_pa_mpjpe.shape[0])  
+    num_tails = [
+        int(0.05*backbone_pa_mpjpe.shape[0]),
+        int(0.10*backbone_pa_mpjpe.shape[0]),
+        int(0.25*backbone_pa_mpjpe.shape[0]),
+    ]
     
     backbone_pa_mpjpe = backbone_pa_mpjpe.mean(1)
-    bb_pa_mpjpe_tail5_idxs = np.argpartition(backbone_pa_mpjpe, -num_tail5)[-num_tail5:]
-    bb_pa_mpjpe_tail5 = backbone_pa_mpjpe[bb_pa_mpjpe_tail5_idxs].mean()
-    bb_pa_mpjpe_tail10_idxs = np.argpartition(backbone_pa_mpjpe, -num_tail10)[-num_tail10:]
-    bb_pa_mpjpe_tail10 = backbone_pa_mpjpe[bb_pa_mpjpe_tail10_idxs].mean()
+    bb_pa_mpjpe_tail_idxs = [np.argpartition(backbone_pa_mpjpe, -num_tails[i])[-num_tails[i]:] for i in range(len(num_tails))]
+    bb_pa_mpjpe_tails = [backbone_pa_mpjpe[bb_pa_mpjpe_tail_idxs[i]].mean() for i in range(len(num_tails))]
     bb_pa_mpjpe_all = backbone_pa_mpjpe.mean()
 
     corr_pa_mpjpe = corr_pa_mpjpe.mean(1)
-    corr_pa_mpjpe_tail5_idxs = np.argpartition(corr_pa_mpjpe, -num_tail5)[-num_tail5:]
-    corr_pa_mpjpe_tail5 = corr_pa_mpjpe[corr_pa_mpjpe_tail5_idxs].mean()
-    corr_pa_mpjpe_tail10_idxs = np.argpartition(corr_pa_mpjpe, -num_tail10)[-num_tail10:]
-    corr_pa_mpjpe_tail10 = corr_pa_mpjpe[corr_pa_mpjpe_tail10_idxs].mean()
+    corr_pa_mpjpe_tails = [corr_pa_mpjpe[bb_pa_mpjpe_tail_idxs[i]].mean() for i in range(len(num_tails))]
     corr_pa_mpjpe_all = corr_pa_mpjpe.mean()
 
     # MPJPE
     backbone_mpjpe = np.sqrt(((backbone_preds - gts)**2).sum(2)).mean(1)
-    bb_mpjpe_tail5_idxs = np.argpartition(backbone_mpjpe, -num_tail5)[-num_tail5:]
-    bb_mpjpe_tail5 = backbone_mpjpe[bb_mpjpe_tail5_idxs].mean()
-    bb_mpjpe_tail10_idxs = np.argpartition(backbone_mpjpe, -num_tail10)[-num_tail10:]
-    bb_mpjpe_tail10 = backbone_mpjpe[bb_mpjpe_tail10_idxs].mean()
+    bb_mpjpe_tail_idxs = [np.argpartition(backbone_mpjpe, -num_tails[i])[-num_tails[i]:] for i in range(len(num_tails))]
+    bb_mpjpe_tails = [backbone_mpjpe[bb_mpjpe_tail_idxs[i]].mean() for i in range(len(num_tails))]
     bb_mpjpe_all = backbone_mpjpe.mean()
 
     corr_mpjpe = np.sqrt(((corr_preds - gts)**2).sum(2)).mean(1)
-    corr_mpjpe_tail5_idxs = np.argpartition(corr_mpjpe, -num_tail5)[-num_tail5:]
-    corr_mpjpe_tail5 = corr_mpjpe[corr_mpjpe_tail5_idxs].mean()
-    corr_mpjpe_tail10_idxs = np.argpartition(corr_mpjpe, -num_tail10)[-num_tail10:]
-    corr_mpjpe_tail10 = corr_mpjpe[corr_mpjpe_tail10_idxs].mean()
+    corr_mpjpe_tails = [corr_mpjpe[bb_mpjpe_tail_idxs[i]].mean() for i in range(len(num_tails))]
     corr_mpjpe_all = corr_mpjpe.mean()
 
     # X/Y/Z errs
@@ -294,22 +286,26 @@ def eval_gt(cnet, R_cnet, config,
     eval_summary_json = {
         'corrected': {
             'PA-MPJPE': corr_pa_mpjpe_all,
-            '(P1 ^10%)': corr_pa_mpjpe_tail10,
-            '(P1 ^5%)': corr_pa_mpjpe_tail5,
+            '(P1 ^25%)': corr_pa_mpjpe_tails[2],
+            '(P1 ^10%)': corr_pa_mpjpe_tails[1],
+            '(P1 ^5%)': corr_pa_mpjpe_tails[0],
             'MPJPE': corr_mpjpe_all,
-            '(P2 ^10%)': corr_mpjpe_tail10,
-            '(P2 ^5%)': corr_mpjpe_tail5,
+            '(P2 ^25%)': corr_mpjpe_tails[2],
+            '(P2 ^10%)': corr_mpjpe_tails[1],
+            '(P2 ^5%)': corr_mpjpe_tails[0],
             'x': corr_err[0],
             'y': corr_err[1],
             'z': corr_err[2],
         },
         'backbone': {
             'PA-MPJPE': bb_pa_mpjpe_all,
-            '(P1 ^10%)': bb_pa_mpjpe_tail10,
-            '(P1 ^5%)': bb_pa_mpjpe_tail5,
+            '(P1 ^25%)': bb_pa_mpjpe_tails[2],
+            '(P1 ^10%)': bb_pa_mpjpe_tails[1],
+            '(P1 ^5%)': bb_pa_mpjpe_tails[0],
             'MPJPE': bb_mpjpe_all,
-            '(P2 ^10%)': bb_mpjpe_tail10,
-            '(P2 ^5%)': bb_mpjpe_tail5,
+            '(P2 ^25%)': bb_mpjpe_tails[2],
+            '(P2 ^10%)': bb_mpjpe_tails[1],
+            '(P2 ^5%)': bb_mpjpe_tails[0],
             'x': backbone_err[0],
             'y': backbone_err[1],
             'z': backbone_err[2],
