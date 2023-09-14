@@ -51,10 +51,14 @@ class adapt_net():
                 self.config.cnet_train_epochs = 10 if not eps else eps #3
                 self.config.lr = 1e-4 if not lr else lr # 5e-4
             else:
-                net_num_stages = 4 if not num_stages else num_stages
-                net_lin_size = 1024 if not lin_size else lin_size
-                self.config.cnet_train_epochs = 6 if not eps else eps #3
-                self.config.lr = 1e-4 if not lr else lr # 5e-4
+                if self.config.cotrain:
+                    net_num_stages = 4
+                    net_lin_size = 1024
+                else:
+                    net_num_stages = 4 if not num_stages else num_stages
+                    net_lin_size = 1024 if not lin_size else lin_size
+                self.config.cnet_train_epochs = 6 if not eps else eps #6
+                self.config.lr = 3e-4 if not lr else lr # 1e-4
 
             self.config.pretrain_epochs = 5
             self.config.pretrain_lr = 1e-5
@@ -69,10 +73,19 @@ class adapt_net():
                     self.config.cnet_train_epochs = 7 if not eps else eps
                     self.config.lr = 1e-4 if not lr else lr
             else:
-                net_num_stages = 4 if not num_stages else num_stages
-                net_lin_size = 1024 if not lin_size else lin_size
-                self.config.cnet_train_epochs = 6 if not eps else eps
-                self.config.lr = 5e-5 if not lr else lr 
+                if self.config.cotrain:
+                    net_num_stages = 4
+                    net_lin_size = 1024
+                else:
+                    net_num_stages = 4 if not num_stages else num_stages
+                    net_lin_size = 1024 if not lin_size else lin_size
+
+                if self.config.only_hard_samples:
+                    self.config.cnet_train_epochs = 6 if not eps else eps
+                    self.config.lr = 1e-4 if not lr else lr 
+                else:
+                    self.config.cnet_train_epochs = 6 if not eps else eps
+                    self.config.lr = 5e-5 if not lr else lr 
 
             # AMASS pretraining params
             self.config.pretrain_epochs = 5
@@ -209,19 +222,26 @@ class adapt_net():
                 # scale according to the backbone
                 data[:2] *= backbone_scale
 
+                # Check scale is correct (all coords should be < 10)
+                wrong_scale_idxs = (torch.where(data[:2].abs() > 10, 1, 0)).nonzero()
+                if wrong_scale_idxs.sum() != 0:
+                    idx = wrong_scale_idxs[...,:-1].unique()
+                    data[idx[0], idx[1]] /= 1e3
+
+                # only keep back backbone pred samples if specified
+                if self.config.only_hard_samples:
+                    # get mse error
+                    mse_err = (((data[0] - data[1])*1000)**2).mean(1)
+                    # keep where error is above thresh
+                    keep_idxs = (mse_err > self.config.hard_sample_thresh).nonzero().squeeze()
+                    data = data[:, keep_idxs]
+                
                 # shuffle & slice data
                 idx = torch.randperm(data.shape[1])
                 data = data[:, idx, :]
 
                 len_train = int(len(data[0]) * self.config.train_split)
                 data_t, data_v = data[:, :len_train, :], data[:, len_train:, :]
-
-                # Check scale is correct (all coords should be < 10)
-                for data in [data_t, data_v]:
-                    wrong_scale_idxs = (torch.where(data[:2].abs() > 10, 1, 0)).nonzero()
-                    if wrong_scale_idxs.sum() != 0:
-                        idx = wrong_scale_idxs[...,:-1].unique()
-                        data[idx[0], idx[1]] /= 1e3
 
                 data_train.append(data_t[:3])   # TEMP: don't include image paths, if they are present
                 data_val.append(data_v[:3])
@@ -231,7 +251,7 @@ class adapt_net():
 
             if self.use_valset == False:
                 # single dummy sample
-                data_val = torch.ones_like(data_train[:, -1:, :])*-99
+                data_val = torch.ones_like(data_train[:, -1:])*-99
 
         return data_train, data_val
 
@@ -276,12 +296,12 @@ class adapt_net():
             for batch_idx, data in enumerate(gt_trainloader):
                 backbone_pred = data[:, 0, :].to(self.device)
                 target_xyz_17 = data[:, 1, :].to(self.device)
+                self.optimizer.zero_grad()
                 inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
                 out = self.cnet(inp)
                 loss = self._loss(backbone_pred, out, target_xyz_17)
                 loss.backward()
                 self.optimizer.step()
-                self.optimizer.zero_grad()
                 cnet_train_losses.append(loss.item())
 
                 # print every 500 batches
@@ -377,7 +397,9 @@ class adapt_net():
         all_net_ckpt_dict = torch.load(load_path)
         self.cnet.load_state_dict(all_net_ckpt_dict) 
     
-    def save(self, path):
+    def save(self, path=None):
+        if path == None:
+            path = self.config.cnet_ckpt_path + self.config.ckpt_name
         print('saving {} to: {}'.format('R-CNet' if self.R else 'CNet', path))
         torch.save(self.cnet.state_dict(), path)
     
