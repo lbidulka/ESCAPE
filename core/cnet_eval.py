@@ -12,39 +12,8 @@ import utils.errors as errors
 import utils.pose_processing as pose_processing
 import utils.quick_plot
 
-from core import cnet_data
+from core import cnet_data, metrics
 
-# def setup_2d_model(config):
-#     '''
-#     '''
-#     config.mmpose_root_dir = '/home/luke/lbidulka/uncertnet_poserefiner/backbones/mmpose/'
-    
-#     config.mmpose_config_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_hrnet-w48_udp-8xb32-210e_coco-256x192.py'
-#     config.mmpose_ckpt_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_hrnet-w48_udp-8xb32-210e_coco-256x192-3feaef8f_20220913.pth'
-
-#     # config.mmpose_config_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_hrnet-w48_8xb32-210e_coco-256x192.py'
-#     # config.mmpose_ckpt_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_hrnet-w48_8xb32-210e_coco-256x192-0e67c616_20220913.pth'
-
-#     # config.mmpose_config_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_litehrnet-30_8xb64-210e_coco-256x192.py'
-#     # config.mmpose_ckpt_file = config.mmpose_root_dir + 'ckpts/' + 'litehrnet30_coco_256x192-4176555b_20210626.pth'
-
-#     mmpose.utils.register_all_modules()
-#     model = mmpose.apis.init_model(config.mmpose_config_file, config.mmpose_ckpt_file, device='cpu')  # or device='cuda:0'
-#     return model
-
-# def get_2d_preds(model_2d, inps, labels, config):
-#     mmpose_results = mmpose.apis.inference_topdown(model_2d, labels['img_path'][0])   # fwd pass
-#     mmpose_preds = mmpose_results[0].pred_instances.keypoints[0]
-
-#     # convert kpt format from COCO to H36M
-#     h36m_kpts = pose_processing.convert_kpts_coco_h36m(mmpose_preds)
-
-#     # Reformat & zero hip
-#     poses_2d = h36m_kpts.reshape(-1, 17, 2)
-#     poses_2d -= poses_2d[:,0]  # zero hip
-#     poses_2d = torch.from_numpy(poses_2d).to(config.device)
-
-#     return poses_2d
 
 def cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d,):
     '''
@@ -180,6 +149,7 @@ def eval_gt(cnet, R_cnet, config,
                     corrected_pred = cnet(cnet_in)
                     if test_adapt and config.split_corr_dim_trick:
                         corrected_pred[:, :, config.split_corr_dim] = corrected_pred_init[:, :, config.split_corr_dim]
+
                 corrected_pred = corrected_pred.reshape(labels['target_xyz_17'].shape[0], -1)
                 output.pred_xyz_jts_17 = corrected_pred
             else:
@@ -200,7 +170,7 @@ def eval_gt(cnet, R_cnet, config,
 
     # Investigation of TTT loss
     if test_adapt:
-        losses = np.array(losses)
+        TTT_losses = np.array(losses)
         # save losses
         TTT_losses_outpath = '../../outputs/TTT_losses/'
         dataset_name = testset_path.split('/')[-2]
@@ -208,7 +178,7 @@ def eval_gt(cnet, R_cnet, config,
             TTT_losses_outpath += dataset_name + '_'
         backbone_name = testset_path.split('/')[-1].split('.')[-2]
         TTT_losses_outpath +=  '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
-        np.save(TTT_losses_outpath, losses)
+        np.save(TTT_losses_outpath, TTT_losses)
 
     # save updated file for mmlab eval (preds, gts, ids)
     if mmlab_out:
@@ -233,55 +203,42 @@ def eval_gt(cnet, R_cnet, config,
     backbone_preds *= 1000
     corr_preds *= 1000
     gts *= 1000
-    # get metrics
 
-    # PA-MPJPE
-    backbone_pa_mpjpe = np.zeros((gts.shape[0], len(config.EVAL_JOINTS)))
-    corr_pa_mpjpe = np.zeros((gts.shape[0], len(config.EVAL_JOINTS)))
-    backbone_err = np.zeros((gts.shape[0], 3))
-    corr_err = np.zeros((gts.shape[0], 3))
-    for i, (backbone_pred, corr_pred, gt) in enumerate(zip(backbone_preds, corr_preds, gts)):
-        backbone_pred_pa = pose_processing.compute_similarity_transform(backbone_pred.copy(), gt.copy())
-        corr_pred_pa = pose_processing.compute_similarity_transform(corr_pred.copy(), gt.copy())
+    # Energy score
+    keep_bb_idxs, corr_idxs = None, None
+    if config.use_cnet_energy:
+        bb_e_scores = torch.logsumexp(torch.tensor(backbone_preds.reshape(backbone_preds.shape[0], -1)), dim=-1)
+        # corr_e_scores = torch.logsumexp(torch.tensor(corr_preds.reshape(corr_preds.shape[0], -1)), dim=-1)
 
-        backbone_pa_mpjpe[i] = np.sqrt(((backbone_pred_pa - gt)**2).sum(1))
-        corr_pa_mpjpe[i] = np.sqrt(((corr_pred_pa - gt)**2).sum(1))
+        # save energies and errors
+        gt_mses = np.square((backbone_preds - gts)).mean((1,2)).reshape(-1,1)
+        energies_losses = np.concatenate([bb_e_scores.reshape(-1,1), gt_mses], axis=1)
+        energies_outpath = '../../outputs/energies/'
+        dataset_name = testset_path.split('/')[-2]
+        if dataset_name != 'PW3D':
+            energies_outpath += dataset_name + '_'
+        backbone_name = testset_path.split('/')[-1].split('.')[-2]
+        energies_outpath +=  '_'.join([backbone_name, 'energies.npy'])
+        np.save(energies_outpath, energies_losses)
 
-        backbone_err[i,0] = np.abs(backbone_pred[:,0] - gt[:,0]).mean()
-        backbone_err[i,1] = np.abs(backbone_pred[:,1] - gt[:,1]).mean()
-        backbone_err[i,2] = np.abs(backbone_pred[:,2] - gt[:,2]).mean()
-        corr_err[i,0] = np.abs(corr_pred[:,0] - gt[:,0]).mean()
-        corr_err[i,1] = np.abs(corr_pred[:,1] - gt[:,1]).mean()
-        corr_err[i,2] = np.abs(corr_pred[:,2] - gt[:,2]).mean()
-
-    num_tails = [
-        int(0.05*backbone_pa_mpjpe.shape[0]),
-        int(0.10*backbone_pa_mpjpe.shape[0]),
-        int(0.25*backbone_pa_mpjpe.shape[0]),
-    ]
+        # only correct if energy is below the thresh (keep if energy is above thresh)
+        keep_bb_idxs = bb_e_scores > config.energy_thresh
+        if config.reverse_thresh: keep_bb_idxs = ~keep_bb_idxs
+        corr_idxs = ~keep_bb_idxs
+        corr_preds[keep_bb_idxs] = backbone_preds[keep_bb_idxs]
     
-    backbone_pa_mpjpe = backbone_pa_mpjpe.mean(1)
-    bb_pa_mpjpe_tail_idxs = [np.argpartition(backbone_pa_mpjpe, -num_tails[i])[-num_tails[i]:] for i in range(len(num_tails))]
-    bb_pa_mpjpe_tails = [backbone_pa_mpjpe[bb_pa_mpjpe_tail_idxs[i]].mean() for i in range(len(num_tails))]
-    bb_pa_mpjpe_all = backbone_pa_mpjpe.mean()
-
-    corr_pa_mpjpe = corr_pa_mpjpe.mean(1)
-    corr_pa_mpjpe_tails = [corr_pa_mpjpe[bb_pa_mpjpe_tail_idxs[i]].mean() for i in range(len(num_tails))]
-    corr_pa_mpjpe_all = corr_pa_mpjpe.mean()
-
-    # MPJPE
-    backbone_mpjpe = np.sqrt(((backbone_preds - gts)**2).sum(2)).mean(1)
-    bb_mpjpe_tail_idxs = [np.argpartition(backbone_mpjpe, -num_tails[i])[-num_tails[i]:] for i in range(len(num_tails))]
-    bb_mpjpe_tails = [backbone_mpjpe[bb_mpjpe_tail_idxs[i]].mean() for i in range(len(num_tails))]
-    bb_mpjpe_all = backbone_mpjpe.mean()
-
-    corr_mpjpe = np.sqrt(((corr_preds - gts)**2).sum(2)).mean(1)
-    corr_mpjpe_tails = [corr_mpjpe[bb_mpjpe_tail_idxs[i]].mean() for i in range(len(num_tails))]
-    corr_mpjpe_all = corr_mpjpe.mean()
-
-    # X/Y/Z errs
-    backbone_err = backbone_err.mean(0)
-    corr_err = corr_err.mean(0)
+    # get metrics
+    num_tails = [
+        int(0.05*gts.shape[0]),
+        int(0.10*gts.shape[0]),
+        int(0.25*gts.shape[0]),
+    ]
+    corr_res, bb_res, att_res = metrics.get_P1_P2(backbone_preds, corr_preds, gts, 
+                                                       corr_idxs,
+                                                       num_tails, config)
+    corr_pa_mpjpe_all, corr_pa_mpjpe_tails, corr_mpjpe_all, corr_mpjpe_tails, corr_err = corr_res
+    bb_pa_mpjpe_all, bb_pa_mpjpe_tails, bb_mpjpe_all, bb_mpjpe_tails, backbone_err = bb_res
+    att_corr_mpjpe, att_corr_pa_mpjpe, att_corr_err, att_bb_mpjpe, att_bb_pa_mpjpe, att_bb_err = att_res
 
     eval_summary_json = {
         'corrected': {
@@ -309,6 +266,21 @@ def eval_gt(cnet, R_cnet, config,
             'x': backbone_err[0],
             'y': backbone_err[1],
             'z': backbone_err[2],
-        }
+        },
+        'attempted_backbone': {
+            'PA-MPJPE': att_bb_pa_mpjpe,
+            'MPJPE': att_bb_mpjpe,
+            'x': att_bb_err[0],
+            'y': att_bb_err[1],
+            'z': att_bb_err[2],
+        },
+        'attempted_corr': {
+            'PA-MPJPE': att_corr_pa_mpjpe,
+            'MPJPE': att_corr_mpjpe,
+            'x': att_corr_err[0],
+            'y': att_corr_err[1],
+            'z': att_corr_err[2],
+            '(num_samples)': int(corr_idxs.sum().item()) if keep_bb_idxs is not None else gts.shape[0],
+        },
     }
     return eval_summary_json

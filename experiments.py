@@ -21,132 +21,14 @@ det_transform = T.Compose([T.ToTensor()])
 from datasets.hybrik import load_hybrik, get_datasets, make_hybrik_pred_dataset
 from cnet.multi_distal import multi_distal
 from cnet.full_body import adapt_net
+from cnet.cotrain import CoTrainer
 from core.cnet_eval import eval_gt
 from config import get_config
 
-import utils.quick_plot
 from utils.optuna_objectives import optuna_objective
 from utils.AMASS import make_amass_kpts
+from utils.output_reporting import plot_TTT_loss, plot_TTT_train_corr, plot_energies, print_test_summary
 
-def plot_TTT_loss(config, task='test'):
-    '''
-    Loads up the losses and plots them
-    '''
-    print("Plotting TTT Losses...")
-    loss_paths = config.cnet_testset_paths if task == 'test' else config.cnet_trainset_paths
-    # combine rcnet target names
-    rcnet_targets_name = ''
-    for target in config.rcnet_targets_name:
-        rcnet_targets_name += target + '_'
-    TTT_losses_outpath = '../../outputs/TTT_losses/'
-    losses = []
-    # iterate overall all backbones 
-    for out_path in loss_paths:
-        backbone_name = out_path.split('/')[-1].split('.')[-2]
-        dataset_name = out_path.split('/')[-2]
-        loss_path = TTT_losses_outpath
-        if dataset_name != 'PW3D':
-            loss_path += dataset_name + '_'
-        loss_path += '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
-        bb_losses = np.load(loss_path)
-        losses.append(bb_losses)
-    losses = np.concatenate(losses)
-
-    save_dir = '../../outputs/testset/test_' if task == 'test' else '../../outputs/trainset/train_'
-    title = 'Testset ' if task == 'test' else 'Trainset '
-    if config.TTT_loss == 'consistency':
-        save_dir += rcnet_targets_name + '_consist_losses.png'
-        title += rcnet_targets_name + ' Consist. Loss vs GT 3D MSE'
-        utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
-                                        xlabel='Consistency Loss', ylabel='GT 3D MSE Loss',
-                                        # x_lim=[0, 25], y_lim=[0, 7500])
-                                        # x_lim=[0, 1000], y_lim=[0, 7500])
-                                        x_lim=[0, 20], y_lim=[0, 200], alpha=0.15)
-    if config.TTT_loss == 'reproj_2d':
-        save_dir += rcnet_targets_name + '_reproj_2d_losses.png'
-        title += rcnet_targets_name + ' 2D reproj. Loss vs GT 3D MSE'
-        utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
-                                        xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss',
-                                        x_lim=[0,1], y_lim=[0, 7500], alpha=0.1)
-
-def plot_TTT_train_corr(cnet, R_cnet, config, print_summary=True):
-    if not config.test_adapt or not (config.TTT_loss == 'consistency'):
-        raise NotImplementedError
-    # Get HybrIK model if required
-    if config.TTT_from_file == False:
-        raise NotImplementedError
-    else:
-        backbone, backbone_cfg, testset = None, None, None
-    # Load CNet & R-CNet, then test
-    if backbone is not None: backbone.to(config.device)
-
-    subsets = []
-    for trainpath in config.cnet_trainset_paths:
-        data = torch.from_numpy(np.load(trainpath)).float().permute(1,0,2)
-        set_len = data.shape[0]
-        subset = np.random.choice(set_len, 
-                                  min(config.test_eval_limit, set_len), 
-                                  replace=False)
-        subsets.append(subset)
-
-    # small function to update the dict with mean of new value and old value
-    def update_bb_summary(bb_summary, test_key, new_vals):
-        # new_vals has keys: [PA-MPJPE, MPJPE, x, y, z]
-        if test_key not in bb_summary.keys():
-            bb_summary[test_key] = {}
-        for k in new_vals.keys():
-            if k not in bb_summary[test_key].keys():
-                bb_summary[test_key][k] = new_vals[k]
-            else:
-                bb_summary[test_key][k] = (bb_summary[test_key][k] + new_vals[k])/2
-
-    summary = {}
-    for train_path, train_backbone, subset in zip(config.cnet_trainset_paths, 
-                                  config.train_backbone_list, 
-                                  subsets):
-        train_scale = 2.2 if train_backbone == 'hybrik' else 1.0
-        if train_backbone not in summary.keys():
-            summary[train_backbone] = {}
-        TTT_eval_summary = None
-        cnet.load_cnets(print_str=False)
-        R_cnet.load_cnets(print_str=False)
-        TTT_eval_summary = eval_gt(cnet, R_cnet, config, backbone, testset, 
-                                    testset_path=train_path, backbone_scale=train_scale, 
-                                    test_cnet=True, test_adapt=True, subset=subset,
-                                    use_data_file=config.TTT_from_file)
-        
-        cnet.load_cnets(print_str=False)
-        eval_summary = eval_gt(cnet, R_cnet, config, testset, backbone, 
-                               testset_path=train_path, backbone_scale=train_scale, test_cnet=True, 
-                               subset=subset, use_data_file=True)
-        
-        update_bb_summary(summary[train_backbone], 'vanilla', eval_summary['backbone'])
-        update_bb_summary(summary[train_backbone], 'w/CN', eval_summary['corrected'])
-        update_bb_summary(summary[train_backbone], '+TTT', TTT_eval_summary['corrected'])
-
-    if print_summary: print_test_summary(summary)
-
-    plot_TTT_loss(config, task='train')
-        
-
-def print_test_summary(summary):
-    '''
-    args:
-        summary: dict of dicts, where each dict is a summary of the testset using a different backbone
-    '''
-    print('\n##### TEST SUMMARY #####')
-    print('P1: PA-MPJPE, P2: MPJPE')
-    for backbone in summary.keys():
-        print('-- {}: --'.format(backbone), end=' ')
-        for test in summary[backbone].keys():
-            print('\n   {}:    '.format(test if test == 'vanilla' else ('   ' + test)), end=' ')
-            for key in summary[backbone][test].keys():
-                if test == 'vanilla': 
-                    print('{}: {:7.2f},'.format(key, summary[backbone][test][key]), end=' ')
-                else:
-                    diff = summary[backbone][test][key] - summary[backbone]['vanilla'][key]
-                    print('{}: {:7.2f},'.format(key, diff), end=' ')
-        print('\n')
 
 def test(cnet, R_cnet, config, print_summary=True):
     # Get HybrIK model if required
@@ -177,6 +59,8 @@ def test(cnet, R_cnet, config, print_summary=True):
                                testset_path=test_path, backbone_scale=test_scale, test_cnet=True, use_data_file=True)
         summary[test_backbone]['vanilla'] = eval_summary['backbone']
         summary[test_backbone]['w/CN'] = eval_summary['corrected']
+        summary[test_backbone]['at V'] = eval_summary['attempted_backbone']
+        summary[test_backbone]['at C'] = eval_summary['attempted_corr']        
         if TTT_eval_summary: summary[test_backbone]['+TTT'] = TTT_eval_summary['corrected']
     if print_summary: print_test_summary(summary)
     return summary
@@ -215,12 +99,17 @@ def main_worker(config):
             R_cnet.train(pretrain_AMASS=True)
         elif task == 'train_RCNet':
             R_cnet.train(continue_train=config.pretrain_AMASS)
+        elif task == 'cotrain':
+            cotrainer = CoTrainer(cnet, R_cnet)
+            cotrainer.train()
         elif task == 'test':
             test(cnet, R_cnet, config)
         elif task == 'plot_TTT_loss':
             plot_TTT_loss(config)
         elif task == 'plot_TTT_train_corr':
             plot_TTT_train_corr(cnet, R_cnet, config,)
+        elif task == 'plot_energies':
+            plot_energies(config)
         elif task == 'optuna_CNet':
             study = optuna.create_study(directions=['minimize', 'minimize'])
             study.optimize(optuna_objective('CNet', config, cnet, R_cnet, test), n_trials=config.optuna_num_trials,)

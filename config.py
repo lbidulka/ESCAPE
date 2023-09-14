@@ -41,10 +41,13 @@ def get_config():
     config.tasks = ['pretrain_CNet', 'test', 'train_CNet', 'test']
     # config.tasks = ['pretrain_CNet']
     # config.tasks = ['pretrain_RCNet']
-    config.tasks = ['train_CNet', 'test']
     
-    config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
+    config.tasks = ['train_CNet', 'make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
+    config.tasks = ['train_CNet', 'test']
+
     # config.tasks = ['test']
+    # config.tasks = ['test', 'plot_energies']
+    # config.tasks = ['plot_energies']
 
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss', 'plot_TTT_train_corr']
     # config.tasks = ['test', 'plot_TTT_loss',]
@@ -52,29 +55,40 @@ def get_config():
     # config.tasks = ['optuna_CNet']
     # config.tasks = ['optuna_TTT']
 
+    # config.tasks = ['cotrain', 'test', 'plot_TTT_loss']
+    # config.tasks = ['plot_TTT_loss']
+
     # Main Settings
     config.optuna_num_trials = 1
     config.print_config = True
     config.err_binned_results = True
     config.use_cnet = True
+
+    config.use_cnet_energy = True     # use energy function to select OOD samples?
+    config.energy_thresh = 700        # correct samples with energy below this
+    config.reverse_thresh = True      # reverse the energy thresholding? (correct if above thresh)
+
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
     
     config.split_corr_dim_trick = False
-    config.split_corr_dim = 0   # which dim to not correct with RCNet
+    config.split_corr_dim = 0   # which dim to not correct with TTT tuned CNet
 
     config.corr_steps = 1   # How many correction iterations at inference?
-    config.corr_step_size = 1.0 # for err pred, what fraction of CNet corr to do
+    config.corr_step_size = 1 # for err pred, what fraction of CNet corr to do
 
     # Fancy Training Options
+    config.cotrain = True if 'cotrain' in config.tasks else False
     config.pretrain_AMASS = False        # use pretrain networks on AMASS?
     config.AMASS_scale = 0.4            # scale AMASS data by this factor when getting kpts
     config.loss_pose_scaling = False
+    config.only_hard_samples = False     # only train on samples with high error?
+    config.hard_sample_thresh = 3000     # threshold for hard samples
     config.sample_weighting = False
     config.continue_train_CNet = False
     config.continue_train_RCNet = False
-    
+     
     # TTT
-    config.test_adapt = True
+    config.test_adapt = False
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
     config.TTT_from_file = True
     if config.TTT_loss == 'reproj_2d':
@@ -86,7 +100,7 @@ def get_config():
             config.test_adapt_lr = 2e-4 # 5e-4
             config.adapt_steps = 2 
         else:
-            config.test_adapt_lr = 2e-4 # 5e-4
+            config.test_adapt_lr = 5e-4 # 5e-4
             config.adapt_steps = 2
         config.TTT_errscale = 1e2
 
@@ -96,7 +110,7 @@ def get_config():
     config.trainsets_str = '_'.join(config.trainsets)
     config.testset = 'PW3D' 
 
-    config.test_eval_limit = 6_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
+    config.test_eval_limit = 50_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
     if config.testset == 'PW3D':
         config.EVAL_JOINTS = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
         config.EVAL_JOINTS.sort()
