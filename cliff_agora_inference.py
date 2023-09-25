@@ -4,10 +4,12 @@ import shutil
 import warnings
 from argparse import ArgumentParser
 from pathlib import Path
+import pickle
 
 import mmcv
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from mmhuman3d.apis import (
     feature_extract,
@@ -17,6 +19,7 @@ from mmhuman3d.apis import (
 )
 from mmhuman3d.core.visualization.visualize_smpl import visualize_smpl_hmr
 from mmhuman3d.data.data_structures.human_data import HumanData
+from mmhuman3d.utils.geometry import projection
 from mmhuman3d.utils.demo_utils import (
     extract_feature_sequence,
     get_speed_up_interval,
@@ -295,16 +298,17 @@ def single_person_with_mmdet(args, frames_iter):
             shutil.rmtree(frames_folder)
 
 
-def multi_person_with_mmtracking(args, frames_iter):
+def multi_person_with_mmtracking(args, frames_iter, path,
+                                 mesh_model, extractor):
     """Estimate smpl parameters from multi-person
         images with mmtracking
     Args:
         args (object):  object of argparse.Namespace.
         frames_iter (np.ndarray,): prepared frames
+        path:  name of input file
+        mesh_model:  mesh model
+        extractor:  extractor model
     """
-    mesh_model, extractor = \
-        init_model(args.mesh_reg_config, args.mesh_reg_checkpoint,
-                   device=args.device.lower())
 
     max_track_id, max_instance, frame_id_list, result_list = \
         get_tracking_result(args, frames_iter, mesh_model, extractor)
@@ -426,9 +430,12 @@ def multi_person_with_mmtracking(args, frames_iter):
         array_to_images(
             np.array(frames_iter)[frame_id_list], output_folder=frames_folder)
 
+        if track_ids_lists == []:
+            return
+
         for i, img_i in enumerate(sorted(os.listdir(frames_folder))):
             for person_i in track_ids_lists[i]:
-                body_pose_.append(smpl_poses[i][person_i][1:])
+                body_pose_.append(smpl_poses[i][person_i])#[1:])
                 global_orient_.append(smpl_poses[i][person_i][:1])
                 smpl_betas_.append(smpl_betas[i][person_i])
                 verts_.append(verts[i][person_i])
@@ -438,76 +445,50 @@ def multi_person_with_mmtracking(args, frames_iter):
                 person_id_.append(person_i)
                 frame_id_.append(frame_id_list[i])
 
-        smpl = {}
-        smpl['body_pose'] = np.array(body_pose_).reshape((-1, 23, 3))
-        smpl['global_orient'] = np.array(global_orient_).reshape((-1, 3))
-        smpl['betas'] = np.array(smpl_betas_).reshape((-1, 10))
-        human_data['smpl'] = smpl
-        human_data['verts'] = verts_
-        human_data['pred_cams'] = pred_cams_
-        human_data['bboxes_xyxy'] = bboxes_xyxy_
-        human_data['image_path'] = image_path_
-        human_data['person_id'] = person_id_
-        human_data['frame_id'] = frame_id_
-        human_data.dump(osp.join(args.output, 'inference_result.npz'))
-
-    # To compress vertices array
-    compressed_verts = np.zeros([frame_num, max_instance, 6890, 3])
-    compressed_cams = np.zeros([frame_num, max_instance, 3])
-    compressed_bboxs = np.zeros([frame_num, max_instance, 5])
-    compressed_poses = np.zeros([frame_num, max_instance, 24, 3])
-    compressed_betas = np.zeros([frame_num, max_instance, 10])
-
-    for i, track_ids_list in enumerate(track_ids_lists):
-        instance_num = len(track_ids_list)
-        compressed_verts[i, :instance_num] = verts[i, track_ids_list]
-        compressed_cams[i, :instance_num] = pred_cams[i, track_ids_list]
-        compressed_bboxs[i, :instance_num] = bboxes_xyxy[i, track_ids_list]
-        compressed_poses[i, :instance_num] = smpl_poses[i, track_ids_list]
-        compressed_betas[i, :instance_num] = smpl_betas[i, track_ids_list]
-
-    assert len(frame_id_list) > 0
-
-    if args.show_path is not None:
-        if args.output is not None:
-            frames_folder = os.path.join(args.output, 'images')
-        else:
-            frames_folder = osp.join(Path(args.show_path).parent, 'images')
-            os.makedirs(frames_folder, exist_ok=True)
-            array_to_images(
-                np.array(frames_iter)[frame_id_list],
-                output_folder=frames_folder)
-        body_model_config = dict(model_path=args.body_model_dir, type='smpl')
-        visualize_smpl_hmr(
-            poses=compressed_poses.reshape(-1, max_instance, 24 * 3),
-            betas=compressed_betas,
-            cam_transl=compressed_cams,
-            bbox=compressed_bboxs,
-            output_path=args.show_path,
-            render_choice=args.render_choice,
-            resolution=frames_iter[0].shape[:2],
-            origin_frames=frames_folder,
-            body_model_config=body_model_config,
-            overwrite=True,
-            palette=args.palette,
-            read_frames_batch=True)
-
+        # Get 2D joints, smpl vertices, and 3d joints for evaluation
+        joints_2d_ = projection(torch.tensor(np.array(body_pose_), dtype=torch.float), 
+                                {'cam_sxy': torch.tensor(np.array(pred_cams_), dtype=torch.float)})
+        out_data = [{
+            'joints': np.array(joints2d).reshape((24, 2)),# * (2160/720),
+            'verts': verts,
+            'allSmplJoints3d': np.array(joints).reshape((24, 3)),
+        }
+        for joints2d, joints, verts in zip(joints_2d_, body_pose_, verts_)]
+        # save separate file for each person ID
+        img_name = path.split('/')[-1].split('.')[0]
+        for id in person_id_:
+            res_data = out_data[id]
+            res_name = '{}_personID_{}.pkl'.format(img_name, id)
+            with open(osp.join(args.output, res_name), 'wb') as f:
+                pickle.dump(res_data, f, protocol=2)
 
 def main(args):
+    # Init model
+    mesh_model, extractor = \
+        init_model(args.mesh_reg_config, args.mesh_reg_checkpoint,
+                   device=args.device.lower())
 
-    # prepare input
-    frames_iter = prepare_frames(args.input_path)
+    # get list of files in args.input_path
+    if os.path.isdir(args.input_path):
+        img_files = sorted(os.listdir(args.input_path))
+        for img_file in tqdm(img_files):
+            img_file = args.input_path + img_file
+            # prepare input
+            frames_iter = prepare_frames(img_file)
 
-    if args.single_person_demo:
-        single_person_with_mmdet(args, frames_iter)
-    elif args.multi_person_demo:
-        multi_person_with_mmtracking(args, frames_iter)
-    else:
-        raise ValueError(
-            'Only supports single_person_demo or multi_person_demo')
+            if args.single_person_demo:
+                single_person_with_mmdet(args, frames_iter)
+            elif args.multi_person_demo:
+                multi_person_with_mmtracking(args, frames_iter, img_file,
+                                             mesh_model, extractor)
+            else:
+                raise ValueError(
+                    'Only supports single_person_demo or multi_person_demo')
 
 
 if __name__ == '__main__':
+    imgs_dir = '/data/lbidulka/pose_datasets/AGORA/validation/'
+    
     proj_dir = '/home/luke/lbidulka/uncertnet_poserefiner/'
     root_dir = 'uncertnet_poserefiner/backbones/mmhuman3d/'
     os.chdir(root_dir)
@@ -552,17 +533,19 @@ if __name__ == '__main__':
     parser.add_argument(
         '--input_path', 
         type=str, 
-        default='demo/resources/ag_validationset_renderpeople_bfh_brushifyforest_5_15_00200_1280x720.png', 
+        # default='demo/resources/ag_validationset_renderpeople_bfh_brushifyforest_5_15_00200_1280x720.png', 
+        default=imgs_dir, 
         help='Input path')
     parser.add_argument(
         '--output',
         type=str,
-        default=None,
+        # default=proj_dir+'/outputs/agora/',
+        default='/data/lbidulka/CLIFF_AGORA_preds/',
         help='directory to save output result file')
     parser.add_argument(
         '--show_path',
         type=str,
-        default='vis_results/',
+        default=None, #'vis_results/',
         help='directory to save rendered images or video')
     parser.add_argument(
         '--render_choice',
