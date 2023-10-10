@@ -29,7 +29,8 @@ def unpack_train_data(data, dataset, target_key, config):
         try:
             labels[k] = labels[k].to(config.device)
         except AttributeError:
-            assert k == 'type'
+            if k == 'img_path': continue
+            else: assert k == 'type'
     
     return inps, labels, img_ids, img_paths, bboxes
 
@@ -66,8 +67,8 @@ def convert_kpts_to_h36m_17s(target_xyzs, dataset):
 
 def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
     # Data/Setup
-    gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=64, shuffle=False, 
-                                            num_workers=16, drop_last=False, pin_memory=True)
+    gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=128, shuffle=False, 
+                                            num_workers=8, drop_last=False, pin_memory=True)
     m.eval()
     m = m.to(config.device)
 
@@ -94,7 +95,7 @@ def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
         img_idss.append(img_ids)
         # img_pathss.append(img_paths)
 
-        if i > 1: break
+        # if i > 16: break
 
     print("Detaching & reformatting...")
     backbone_preds = [b.detach().cpu().numpy() for b in backbone_preds]
@@ -113,10 +114,11 @@ def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
     # # img_paths = np.concatenate([int(p.split('/')[-1].split('.')[0]) for p in img_paths], axis=0).reshape(-1,1)
     # img_pathss = np.array(img_names).reshape(-1,1)
 
-    # normalize target magnitude to match the backbone
-    scale_pred = np.linalg.norm(backbone_preds, keepdims=True)
-    scale_gt = np.linalg.norm(target_xyz_17s, keepdims=True)
-    target_xyz_17s /= (scale_gt / scale_pred)
+    # Fix scale of MPii pseudo-GT by normalize target magnitude to match the backbone preds
+    if dataset == 'MPii':
+        scale_pred = np.linalg.norm(backbone_preds, keepdims=True)
+        scale_gt = np.linalg.norm(target_xyz_17s, keepdims=True)
+        target_xyz_17s /= (scale_gt / scale_pred)
 
     if task == 'train':
         dataset_outpath = '{}{}/{}_cnet_hybrik_train.npy'.format(config.cnet_dataset_path, dataset, config.hybrIK_version,)
