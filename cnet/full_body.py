@@ -52,13 +52,13 @@ class adapt_net():
                 self.config.lr = 1e-4 if not lr else lr # 5e-4
             else:
                 if self.config.cotrain:
-                    net_num_stages = 4
-                    net_lin_size = 1024
+                    net_num_stages = 2
+                    net_lin_size = 512
                 else:
-                    net_num_stages = 4 if not num_stages else num_stages
-                    net_lin_size = 1024 if not lin_size else lin_size
+                    net_num_stages = 2 if not num_stages else num_stages
+                    net_lin_size = 512 if not lin_size else lin_size
                 self.config.cnet_train_epochs = 6 if not eps else eps #6
-                self.config.lr = 3e-4 if not lr else lr # 1e-4
+                self.config.lr = 5e-4 if not lr else lr # 1e-4
 
             self.config.pretrain_epochs = 5
             self.config.pretrain_lr = 1e-5
@@ -74,18 +74,22 @@ class adapt_net():
                     self.config.lr = 1e-4 if not lr else lr
             else:
                 if self.config.cotrain:
-                    net_num_stages = 4
-                    net_lin_size = 1024
+                    net_num_stages = 2
+                    net_lin_size = 512
                 else:
-                    net_num_stages = 4 if not num_stages else num_stages
-                    net_lin_size = 1024 if not lin_size else lin_size
+                    # net_num_stages = 4 if not num_stages else num_stages
+                    # net_lin_size = 1024 if not lin_size else lin_size
+                    net_num_stages = 2 if not num_stages else num_stages
+                    net_lin_size = 512 if not lin_size else lin_size
 
                 if self.config.only_hard_samples:
                     self.config.cnet_train_epochs = 6 if not eps else eps
                     self.config.lr = 1e-4 if not lr else lr 
                 else:
+                    # self.config.cnet_train_epochs = 6 if not eps else eps
+                    # self.config.lr = 5e-5 if not lr else lr 
                     self.config.cnet_train_epochs = 6 if not eps else eps
-                    self.config.lr = 5e-5 if not lr else lr 
+                    self.config.lr = 5e-4 if not lr else lr 
 
             # AMASS pretraining params
             self.config.pretrain_epochs = 5
@@ -105,54 +109,139 @@ class adapt_net():
         self.config.batch_size = 4096
 
         self.config.ep_print_freq = 5
+    
+    def __call__(self, cnet_in, ret_corr_idxs=False):
+        out_pred = cnet_in.clone().detach()
+        if self.config.use_cnet_energy and self.R == False:
+            E_in = self._energy(cnet_in)
+            if self.config.energy_lower_thresh:
+                # dont correct samples with energy above threshold
+                dont_corr_idxs = E_in > self.config.energy_thresh
+            else:
+                dont_corr_idxs = torch.zeros(cnet_in.shape[0]).bool().to(self.device)
 
-    def _loss(self, backbone_pred, cnet_out, target_xyz_17):
-        '''
-        Loss function
-        '''
-        # scale cnet targets to match backbone scale
-        if self.config.loss_pose_scaling:
-            scale_target = torch.sqrt((target_xyz_17**2).sum(dim=(1,2), keepdim=True))
-            scale_backbone = torch.sqrt((backbone_pred**2).sum(dim=(1,2), keepdim=True))
-            # target_xyz_17 /= (scale_target / scale_backbone)
-            backbone_pred *= (scale_target / scale_backbone)
+            # init step sizes
+            step_sizes = torch.ones_like(cnet_in[:,:1,0]) * self.config.corr_step_size
+            
+            if self.config.energy_scaled_corr:
+                # scale step sizes based on energy
+                # med_thresh = 600
+                # hard_thresh = 400
 
-        if self.pred_errs: 
-            cnet_target = backbone_pred - target_xyz_17  # predict errors
+                # med_idxs = ((E_in < med_thresh) & (E_in > hard_thresh)).nonzero()
+                # hard_idxs = (E_in < hard_thresh).nonzero()
+
+                # step_sizes[med_idxs] *= 2.0
+                # step_sizes[hard_idxs] *= 3.0
+
+                step_sizes *= torch.clamp(1.0 - (E_in - 900)/(200),
+                                          min=0.0, max=10.0).reshape(-1,1)
         else:
-            cnet_target = target_xyz_17.clone() # predict kpts
+            dont_corr_idxs = torch.zeros(cnet_in.shape[0]).bool().to(self.device)
+            step_sizes = torch.ones_like(cnet_in[:,:1,0]) * self.config.corr_step_size
+        corr_idxs = ~dont_corr_idxs.cpu()
+        step_sizes = step_sizes[corr_idxs]
 
-        cnet_target = torch.flatten(cnet_target[:, self.target_kpts, :], start_dim=1)
-        loss = self.criterion(cnet_out, cnet_target*self.config.err_scale).mean(dim=1)
-        if self.config.sample_weighting:
-            sample_ws = torch.sigmoid((cnet_target).norm(2, dim=1, keepdim=True).mean(dim=1))   # cnet_target.norm(2, dim=1, keepdim=True).mean(dim=1)
-            loss *= sample_ws
-        return loss.mean()
+        # during TTT we might only have one sample, and so we can return if we dont need to do anything
+        if corr_idxs.sum() == 0:
+            if ret_corr_idxs:
+                return cnet_in, corr_idxs
+            else:
+                return cnet_in
 
-    def _corr(self, backbone_pred):
-        '''
-        Correct the backbone predictions, no Feedback
-        '''
-        inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
-        pred_errs = self.cnet(inp) / self.config.err_scale
-        pred_errs = pred_errs.reshape(-1, len(self.target_kpts), 3) # net output is 4x3 (4 distal joints, 3d) errors
-        corr_pred = backbone_pred.detach().clone()
-        if self.pred_errs:
-            for dim in self.corr_dims:
-                corr_pred[:, self.target_kpts, dim] -= self.config.corr_step_size*pred_errs[..., dim]
-        else:
-            for dim in self.corr_dims:
-                # TODO: ADD STEP SIZE TO THIS CORRECTION
-                diff = backbone_pred[:, self.target_kpts, dim] - pred_errs[..., dim]
-                # corr_pred[:, self.target_kpts, dim] = pred_errs[:, self.target_kpts, dim]
-                corr_pred[:, self.target_kpts, dim] -= self.config.corr_step_size*diff
-        return corr_pred
+        # rotate poses to zero orientation
+        if self.config.zero_orientation:
+            cnet_in, rot, i_rot = self._zero_orientation(cnet_in[corr_idxs])
 
-    def __call__(self, cnet_in):
+        # correct as required
         for i in range(self.config.corr_steps):
-            corr_pred = self._corr(cnet_in)
+            corr_pred = self._corr(cnet_in, step_sizes=step_sizes)
             cnet_in = corr_pred
+        
+        # restore corr poses to original orientation
+        if self.config.zero_orientation:
+            corr_pred = torch.bmm(i_rot.transpose(1,2), 
+                                    corr_pred.reshape(-1, corr_pred.shape[1], 3).transpose(1,2)).transpose(1,2)
+
+        # place samples back in original tensor at original indices
+        out_pred[corr_idxs] = corr_pred
+
+        if ret_corr_idxs:
+            return out_pred, corr_idxs
+        else:
+            return out_pred
+
+    def _corr(self, in_pose, step_sizes):
+        '''
+        Correct the input poses
+        '''
+        inp = in_pose[:,self.in_kpts].flatten(1)
+        # inp = inp.reshape(inp.shape[0], -1) #.flatten(1)
+        pred_errs = self.cnet(inp) / self.config.err_scale
+        pred_errs = pred_errs.reshape(-1, len(self.target_kpts), 3) 
+        corr_pred = in_pose.detach().clone()
+        # do correction
+        for dim in self.corr_dims:
+            if self.pred_errs:
+                diff = pred_errs[..., dim]
+            else:
+                in_pose[:, self.target_kpts, dim] - pred_errs[..., dim]
+            corr_pred[:, self.target_kpts, dim] -= step_sizes*diff
         return corr_pred
+
+    def _energy(self, data):
+        '''
+        Compute the energy score of the regression data
+        '''
+        E = torch.logsumexp(data.flatten(1) * 1000, dim=-1)
+        return E
+    
+    def _zero_orientation(self, in_poses):
+        '''
+        Zero the orientation of the poses, according to the neck->pelvis and Lhip->Rhip vectors.
+        The cross prod. of the two should face (0,0,1)
+        '''
+        poses = in_poses.detach().clone()
+        # get neck->pelvis and Lhip->Rhip vectors
+        y_vec = poses[:, 8] - poses[:, 0]
+        x_vec = poses[:, 1] - poses[:, 4]
+        x_vec /= torch.norm(x_vec, dim=-1, keepdim=True)
+        y_vec /= torch.norm(y_vec, dim=-1, keepdim=True)
+
+        # get cross prod of the two
+        z_vec = torch.cross(x_vec, y_vec,)
+        z_vec /= torch.norm(z_vec, dim=-1, keepdim=True)
+        
+        # Rot around z-axis by z_ang
+        rot = torch.ones((len(z_vec), 3, 3)).to(self.device)
+        rot[..., 0] = x_vec
+        rot[..., 1] = y_vec
+        rot[..., 2] = z_vec
+        i_rot = torch.inverse(rot)
+
+        rot_poses = torch.bmm(rot.transpose(1,2), poses.transpose(1,2)).transpose(1,2)
+        return rot_poses, rot, i_rot
+
+    def _create_synth_amass(self, data,):
+        '''
+        add noise to kpts, to emulate backbone prediction errs
+        '''
+        noise_mean = 0.0
+        distal_noise_std = 0.05
+        body_noise_std = 0.03
+
+        noisy_preds = data[0].reshape(data.shape[1], -1, 3).clone().detach()
+        body_noise = torch.empty_like(noisy_preds).normal_(mean=noise_mean, std=body_noise_std)
+        body_noise[:, :, 2] *= 2
+        distal_noise = torch.empty_like(noisy_preds[:,self.config.distal_kpts]).normal_(mean=noise_mean, std=distal_noise_std)
+        distal_noise[:, :, 2] *= 2
+
+        noisy_preds[:, [kpt for kpt in range(1,17) if kpt not in self.config.distal_kpts]] += body_noise[:,[kpt for kpt in range(1,17) if kpt not in self.config.distal_kpts]]
+        noisy_preds[:,self.config.distal_kpts] += distal_noise
+
+        # Update "backbone" predictions with the noisy preds
+        data[0] = noisy_preds.reshape(data.shape[1], data.shape[2])
+        return data
 
     def _load_data_files(self, load_AMASS=False):
         '''
@@ -164,24 +253,8 @@ class adapt_net():
             self.use_valset = True
             amass_kpt_data = np.load(self.config.amass_kpts_path)['pose3d']    
             data = torch.from_numpy(amass_kpt_data).float()
-
-            # add noise to kpts, to emulate backbone prediction errs
-            noise_mean = 0.0
-            distal_noise_std = 0.05
-            body_noise_std = 0.03
-
-            noisy_preds = data[0].reshape(data.shape[1], -1, 3).clone().detach()
-            body_noise = torch.empty_like(noisy_preds).normal_(mean=noise_mean, std=body_noise_std)
-            body_noise[:, :, 2] *= 2
-            distal_noise = torch.empty_like(noisy_preds[:,self.config.distal_kpts]).normal_(mean=noise_mean, 
-                                                                                            std=distal_noise_std)
-            distal_noise[:, :, 2] *= 2
-
-            noisy_preds[:, [kpt for kpt in range(1,17) if kpt not in self.config.distal_kpts]] += body_noise[:,[kpt for kpt in range(1,17) if kpt not in self.config.distal_kpts]]
-            noisy_preds[:,self.config.distal_kpts] += distal_noise
             
-            # Update "backbone" predictions with the noisy preds
-            data[0] = noisy_preds.reshape(data.shape[1], data.shape[2])
+            data = self._create_synth_amass(data)
 
             # shuffle & slice data
             idx = torch.randperm(data.shape[1])
@@ -213,6 +286,14 @@ class adapt_net():
                     idx = np.where(data[1,:,:].sum(axis=1) != 0)
                     data = data[:, idx, :]
                     data = data.squeeze()
+                # TEMP DEBUG ----------------------------------------------
+                if ('RICH' in trainset_path):
+                    # add img ids to data
+                    ids = torch.arange(len(data[1])).reshape(-1,1)
+                    ids = ids.repeat(51, 1)
+                    ids = ids.reshape(1, -1, 51)
+                    data = torch.cat([data, ids], axis=0)
+                # ----------------------------------------------------------
                 if data_lim is not None:
                     # get random subset of data
                     self.config.train_data_ids.append(np.random.choice(data.shape[1], 
@@ -228,11 +309,9 @@ class adapt_net():
                     idx = wrong_scale_idxs[...,:-1].unique()
                     data[idx[0], idx[1]] /= 1e3
 
-                # only keep back backbone pred samples if specified
+                # only keep bad backbone pred samples if specified
                 if self.config.only_hard_samples:
-                    # get mse error
                     mse_err = (((data[0] - data[1])*1000)**2).mean(1)
-                    # keep where error is above thresh
                     keep_idxs = (mse_err > self.config.hard_sample_thresh).nonzero().squeeze()
                     data = data[:, keep_idxs]
                 
@@ -255,6 +334,29 @@ class adapt_net():
 
         return data_train, data_val
 
+    def _loss(self, backbone_pred, cnet_out, target_xyz_17):
+        '''
+        Loss function
+        '''
+        # scale cnet targets to match backbone scale
+        if self.config.loss_pose_scaling:
+            scale_target = torch.sqrt((target_xyz_17**2).sum(dim=(1,2), keepdim=True))
+            scale_backbone = torch.sqrt((backbone_pred**2).sum(dim=(1,2), keepdim=True))
+            # target_xyz_17 /= (scale_target / scale_backbone)
+            backbone_pred *= (scale_target / scale_backbone)
+
+        if self.pred_errs: 
+            cnet_target = backbone_pred - target_xyz_17  # predict errors
+        else:
+            cnet_target = target_xyz_17.clone() # predict kpts
+
+        cnet_target = torch.flatten(cnet_target[:, self.target_kpts, :], start_dim=1)
+        loss = self.criterion(cnet_out, cnet_target*self.config.err_scale).mean(dim=1)
+        if self.config.sample_weighting:
+            sample_ws = torch.sigmoid((cnet_target).norm(2, dim=1, keepdim=True).mean(dim=1))   # cnet_target.norm(2, dim=1, keepdim=True).mean(dim=1)
+            loss *= sample_ws
+        return loss.mean()
+
     def train(self, pretrain_AMASS=False, continue_train=False):
         data_train, data_val = self._load_data_files(pretrain_AMASS)
 
@@ -265,6 +367,7 @@ class adapt_net():
 
         train_transform = hflip_keypoints()
         gt_trainset = cnet_pose_dataset(data_train, transform=train_transform)
+        # gt_trainset = cnet_pose_dataset(data_train,)
         gt_trainloader = torch.utils.data.DataLoader(gt_trainset, batch_size=self.config.batch_size, shuffle=True, 
                                                      num_workers=8, drop_last=False, pin_memory=True)
                                                     # drop_last=False, pin_memory=True)
@@ -297,8 +400,23 @@ class adapt_net():
                 backbone_pred = data[:, 0, :].to(self.device)
                 target_xyz_17 = data[:, 1, :].to(self.device)
                 self.optimizer.zero_grad()
-                inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
+
+                # rotate poses to zero orientation
+                if self.config.zero_orientation:
+                    backbone_pred, rot, i_rot = self._zero_orientation(backbone_pred)
+
+                # inp = torch.flatten(backbone_pred[:,self.in_kpts], start_dim=1)
+                inp = backbone_pred[:,self.in_kpts].flatten(1)
                 out = self.cnet(inp)
+
+                # restore corr poses to original orientation
+                if self.config.zero_orientation:
+                    out = torch.bmm(i_rot.transpose(1,2), 
+                                    out.reshape(-1, len(self.target_kpts), 3).transpose(1,2)).transpose(1,2)
+                    out = out.flatten(1)
+                    backbone_pred = torch.bmm(i_rot.transpose(1,2),
+                                                backbone_pred.transpose(1,2)).transpose(1,2)
+
                 loss = self._loss(backbone_pred, out, target_xyz_17)
                 loss.backward()
                 self.optimizer.step()
