@@ -21,7 +21,7 @@ def print_test_summary(summary):
                 if test == 'vanilla' or test == 'at V' or key == '(num_samples)':
                     print('{}: {:7.2f},'.format(key, summary[backbone][test][key]), end=' ')
                 else:
-                    if test == 'at C':
+                    if test == 'at C' or test == 'aTTT':
                         ref_test = 'at V'
                     else:
                         ref_test = 'vanilla'
@@ -29,12 +29,21 @@ def print_test_summary(summary):
                     print('{}: {:7.2f},'.format(key, diff), end=' ')
         print('\n')
 
-def plot_energies(config):
+def plot_energies(config, task):
     ''' 
     loads up the losses (including energies) and plots them
     '''
     print("Plotting Energies + Losses...")
-    loss_paths = config.cnet_testset_paths
+    
+    if task == 'test':
+        loss_paths = config.cnet_testset_paths
+        save_dir = '../../outputs/testset/test_'
+        title = 'Testset '
+    else:
+        loss_paths = config.cnet_trainset_paths
+        save_dir = '../../outputs/trainset/train_'
+        title = 'Trainset '
+    
     energies_outpath = '../../outputs/energies/'
     # iterate overall all backbones
     energies_losses = []
@@ -47,22 +56,20 @@ def plot_energies(config):
         loss_path += '_'.join([backbone_name, 'energies.npy'])
         bb_losses = np.load(loss_path)
         energies_losses.append(bb_losses)
-    energies_losses = np.concatenate(energies_losses)
+    energies_losses = np.concatenate(energies_losses)        
 
-    save_dir = '../../outputs/testset/test_'
-    title = 'Testset '
+    
     save_dir += 'bb_energies_losses.png'
     title += 'Backbone Pred Energies vs GT 3D MSE'
     utils.quick_plot.simple_2d_plot(energies_losses, save_dir=save_dir, title=title,
                                     xlabel='BB Sample Energies', ylabel='GT 3D MSE Loss',
                                     x_lim=[250, 900], y_lim=[0, 20000], alpha=0.1)
 
-
 def plot_TTT_loss(config, task='test'):
     '''
     Loads up the losses and plots them
     '''
-    print("Plotting TTT Losses...")
+    print("Plotting TTT Losses...", end=' ')
     loss_paths = config.cnet_testset_paths if task == 'test' else config.cnet_trainset_paths
     # combine rcnet target names
     rcnet_targets_name = ''
@@ -98,9 +105,10 @@ def plot_TTT_loss(config, task='test'):
         utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
                                         xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss',
                                         x_lim=[0,1], y_lim=[0, 7500], alpha=0.1)
+    print("saved to {}".format(save_dir))
 
-def plot_TTT_train_corr(cnet, R_cnet, config, print_summary=True):
-    if not config.test_adapt or not (config.TTT_loss == 'consistency'):
+def test_trainsets(cnet, R_cnet, config, print_summary=True):
+    if not (config.TTT_loss == 'consistency'):
         raise NotImplementedError
     # Get HybrIK model if required
     if config.TTT_from_file == False:
@@ -142,7 +150,7 @@ def plot_TTT_train_corr(cnet, R_cnet, config, print_summary=True):
         R_cnet.load_cnets(print_str=False)
         TTT_eval_summary = eval_gt(cnet, R_cnet, config, backbone, testset, 
                                     testset_path=train_path, backbone_scale=train_scale, 
-                                    test_cnet=True, test_adapt=True, subset=subset,
+                                    test_cnet=True, test_adapt=config.test_adapt, subset=subset,
                                     use_data_file=config.TTT_from_file)
         
         cnet.load_cnets(print_str=False)
@@ -155,5 +163,3 @@ def plot_TTT_train_corr(cnet, R_cnet, config, print_summary=True):
         update_bb_summary(summary[train_backbone], '+TTT', TTT_eval_summary['corrected'])
 
     if print_summary: print_test_summary(summary)
-
-    plot_TTT_loss(config, task='train')
