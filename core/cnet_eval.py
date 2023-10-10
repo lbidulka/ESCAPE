@@ -44,7 +44,11 @@ def unpack_test_data(data, m, model_2d, use_data_file, config, flip_test=True):
         output = SimpleNamespace()
         output.pred_xyz_jts_17 = data[0][:,0].to(config.device)
         labels['target_xyz_17'] = data[0][:,1].to(config.device)
-        img_ids = data[0][:,2,:1].to(config.device)
+        # if theres no img_ids, add dummies
+        if data[0].shape[1] == 2:
+            img_ids = torch.ones(data[0].shape[0], 1) * -1
+        else:
+            img_ids = data[0][:,2,:1].to(config.device)
         poses_2d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)[:,:,:2]    # TEMP: using labels for 2D
     else:
         (inps, labels, img_ids, bboxes) = data
@@ -71,7 +75,7 @@ def eval_gt(cnet, R_cnet, config,
             m=None, gt_eval_dataset=None, 
             testset_path=None, backbone_scale=1.0,
             test_cnet=False, test_adapt=False, 
-            use_data_file=False, mmlab_out=False,
+            use_data_file=False, agora_out=False,
             subset=None,):
     '''
     '''
@@ -81,10 +85,7 @@ def eval_gt(cnet, R_cnet, config,
         batch_size = 4096
     # Data/Setup
     if use_data_file:
-        if mmlab_out:
-            test_file = config.mmlab_testset_path + '.npy'
-        else:
-            test_file = testset_path
+        test_file = testset_path
         test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
         if subset is None: 
             subset = config.test_eval_subset
@@ -110,18 +111,19 @@ def eval_gt(cnet, R_cnet, config,
 
     backbone_preds = []
     corr_preds = []
+    corr_idxs = []
     gts = []
     losses = []
     for it, data in enumerate(tqdm(gt_eval_loader, dynamic_ncols=True)):
         output, labels, img_ids, poses_2d = unpack_test_data(data, m, model_2d, use_data_file, config)
-        backbone_pred = output.pred_xyz_jts_17.reshape(-1, 17, 3)
+        backbone_pred = output.pred_xyz_jts_17.reshape(output.pred_xyz_jts_17.shape[0], -1, 3)
         if test_cnet:
             if config.use_cnet:
                 corrected_pred_init = None
                 if test_adapt:
                     # THIS IS SUPER INNEFICIENT, AND WASTES MY TIME :(
                     cnet.load_cnets(print_str=False)
-                    if config.split_corr_dim_trick:
+                    if len(config.split_corr_dims) > 0:
                         cnet.cnet.eval()
                         corrected_pred_init = cnet(backbone_pred.detach().clone())
                     cnet.cnet.train()
@@ -132,23 +134,36 @@ def eval_gt(cnet, R_cnet, config,
                     cnet_in = backbone_pred.detach().clone()
                     for i in range(config.adapt_steps):
                         optimizer.zero_grad()
-                        corrected_pred = cnet(cnet_in)
-                        Rcnet_pred = R_cnet(corrected_pred)
-                        loss = cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d)
-                        loss.backward()
-                        optimizer.step()
+                        corrected_pred, corr_idx = cnet(cnet_in, ret_corr_idxs=True)
 
-                        gt_3d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)
-                        # gt_mse = torch.square((backbone_pred[:,config.distal_kpts,:] - gt_3d[:,config.distal_kpts])*config.TTT_errscale).mean()
-                        gt_mse = torch.square((corrected_pred - gt_3d)*config.TTT_errscale).mean()
-                        losses.append([loss.item(), gt_mse.item()])
+                        # only do TTT if there are any corrected samples
+                        if corr_idx.sum() > 0:
+                            Rcnet_pred = R_cnet(corrected_pred)
+                            loss = cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d)
+                            loss.backward()
+                            optimizer.step()
+
+                            gt_3d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)
+                            # gt_mse = torch.square((backbone_pred[:,config.distal_kpts,:] - gt_3d[:,config.distal_kpts])*config.TTT_errscale).mean()
+                            gt_mse = torch.square((corrected_pred - gt_3d)*config.TTT_errscale).mean()
+                            losses.append([loss.item(), gt_mse.item()])
 
                 with torch.no_grad():
                     # get corrected pred, with adjusted cnet
                     cnet_in = backbone_pred
-                    corrected_pred = cnet(cnet_in)
-                    if test_adapt and config.split_corr_dim_trick:
-                        corrected_pred[:, :, config.split_corr_dim] = corrected_pred_init[:, :, config.split_corr_dim]
+                    corrected_pred, batch_corr_idxs = cnet(cnet_in, ret_corr_idxs=True)
+                    corr_idxs.append(batch_corr_idxs)
+                    # Only correct specified CNet corr dims
+                    if len(config.cnet_dont_corr_dims) > 0:
+                        corrected_pred_init = backbone_pred.detach().clone()
+                        corrected_pred[:, :, config.cnet_dont_corr_dims] = corrected_pred_init[:, :, config.cnet_dont_corr_dims]
+                    # Only use TTT improved preds for specified dims
+                    # if config.split_corr_dim_trick:
+                    if len(config.split_corr_dims) > 0:
+                        if corrected_pred_init is None:
+                            corrected_pred_init = backbone_pred.detach().clone()
+
+                        corrected_pred[:, :, config.split_corr_dims] = corrected_pred_init[:, :, config.split_corr_dims]
 
                 corrected_pred = corrected_pred.reshape(labels['target_xyz_17'].shape[0], -1)
                 output.pred_xyz_jts_17 = corrected_pred
@@ -180,16 +195,21 @@ def eval_gt(cnet, R_cnet, config,
         TTT_losses_outpath +=  '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
         np.save(TTT_losses_outpath, TTT_losses)
 
-    # save updated file for mmlab eval (preds, gts, ids)
-    if mmlab_out:
-        test_data = torch.from_numpy(np.load(test_file)).float()
-        # replace preds with corrected preds
-        for id in kpt_all_pred.keys():
-            test_data[0, np.where(test_data[2,:,0]==id)] = torch.from_numpy(kpt_all_pred[id]['xyz_17']).reshape(1,1,51)
+    # save corrected preds for agora eval
+    if agora_out:
+        agora_corr_preds = np.concatenate(corr_preds, axis=0)
+        # order was scrambled according to config.test_eval_subset, so we need to reverse it 
+        # (since agora is expecting the original order)
+        reverse_idxs = [np.where(np.array(config.test_eval_subset) == i)[0][0] for i in range(len(config.test_eval_subset))]
+        agora_corr_preds = agora_corr_preds[reverse_idxs]
+
         # save npy file
-        test_out_file = config.mmlab_testset_path + '_corrected.npy'
-        print("Saving corrected preds to {} for mmlab eval...".format(test_out_file))
-        np.save(test_out_file, test_data.cpu().data.numpy())    
+        if test_adapt:
+            test_out_file = testset_path.replace('_test.npy', '_corrected_+TTT.npy')
+        else:
+            test_out_file = testset_path.replace('_test.npy', '_corrected.npy')
+        print("Saving corrected preds to {} for AGORA eval...".format(test_out_file))
+        np.save(test_out_file, agora_corr_preds)
     
     # concat all preds and gts
     backbone_preds = np.concatenate(backbone_preds, axis=0)
@@ -204,15 +224,14 @@ def eval_gt(cnet, R_cnet, config,
     corr_preds *= 1000
     gts *= 1000
 
-    # Energy score
-    keep_bb_idxs, corr_idxs = None, None
+    corr_idxs = np.concatenate(corr_idxs, axis=0)
+
+    # Save Energy scores and gt MSEs for plotting
     if config.use_cnet_energy:
         bb_e_scores = torch.logsumexp(torch.tensor(backbone_preds.reshape(backbone_preds.shape[0], -1)), dim=-1)
-        # corr_e_scores = torch.logsumexp(torch.tensor(corr_preds.reshape(corr_preds.shape[0], -1)), dim=-1)
-
-        # save energies and errors
         gt_mses = np.square((backbone_preds - gts)).mean((1,2)).reshape(-1,1)
         energies_losses = np.concatenate([bb_e_scores.reshape(-1,1), gt_mses], axis=1)
+
         energies_outpath = '../../outputs/energies/'
         dataset_name = testset_path.split('/')[-2]
         if dataset_name != 'PW3D':
@@ -220,12 +239,6 @@ def eval_gt(cnet, R_cnet, config,
         backbone_name = testset_path.split('/')[-1].split('.')[-2]
         energies_outpath +=  '_'.join([backbone_name, 'energies.npy'])
         np.save(energies_outpath, energies_losses)
-
-        # only correct if energy is below the thresh (keep if energy is above thresh)
-        keep_bb_idxs = bb_e_scores > config.energy_thresh
-        if config.reverse_thresh: keep_bb_idxs = ~keep_bb_idxs
-        corr_idxs = ~keep_bb_idxs
-        corr_preds[keep_bb_idxs] = backbone_preds[keep_bb_idxs]
     
     # get metrics
     num_tails = [
@@ -280,7 +293,7 @@ def eval_gt(cnet, R_cnet, config,
             'x': att_corr_err[0],
             'y': att_corr_err[1],
             'z': att_corr_err[2],
-            '(num_samples)': int(corr_idxs.sum().item()) if keep_bb_idxs is not None else gts.shape[0],
+            '(num_samples)': int(corr_idxs.sum().item()),
         },
     }
     return eval_summary_json
