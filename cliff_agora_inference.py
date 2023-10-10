@@ -446,8 +446,22 @@ def multi_person_with_mmtracking(args, frames_iter, path,
                 frame_id_.append(frame_id_list[i])
 
         # Get 2D joints, smpl vertices, and 3d joints for evaluation
-        joints_2d_ = projection(torch.tensor(np.array(body_pose_), dtype=torch.float), 
-                                {'cam_sxy': torch.tensor(np.array(pred_cams_), dtype=torch.float)})
+        # joints_2d_ = projection(torch.tensor(np.array(body_pose_), dtype=torch.float), 
+        #                         {'cam_sxy': torch.tensor(np.array(pred_cams_), dtype=torch.float)})
+
+        # get 2D joints by simple 2D projection of 3D joints then scale to bbx size
+        joints_2d_ = np.array(body_pose_)[..., :2]
+        
+        # get scales for each person, which should be [y diff of bbx, x diff of bbx]
+        scales = [ [(b[2]-b[0]), (b[3]-b[1])] for b in bboxes_xyxy_ ]
+        scales = np.array(scales)
+
+        # scale 2D joints
+        joints_2d_ *= scales.reshape(-1,1,2)
+        # shift 2D joints so that centre of pose is at centre of bbx
+        bbx_centre = np.array([ [b[0] + (b[2]-b[0])/2, b[1] + (b[3]-b[1])/2] for b in bboxes_xyxy_ ])
+        joints_2d_ += bbx_centre.reshape(-1,1,2)
+
         out_data = [{
             'joints': np.array(joints2d).reshape((24, 2)),# * (2160/720),
             'verts': verts,
