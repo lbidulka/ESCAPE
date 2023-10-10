@@ -12,39 +12,8 @@ import utils.errors as errors
 import utils.pose_processing as pose_processing
 import utils.quick_plot
 
-from core import cnet_data
+from core import cnet_data, metrics
 
-# def setup_2d_model(config):
-#     '''
-#     '''
-#     config.mmpose_root_dir = '/home/luke/lbidulka/uncertnet_poserefiner/backbones/mmpose/'
-    
-#     config.mmpose_config_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_hrnet-w48_udp-8xb32-210e_coco-256x192.py'
-#     config.mmpose_ckpt_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_hrnet-w48_udp-8xb32-210e_coco-256x192-3feaef8f_20220913.pth'
-
-#     # config.mmpose_config_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_hrnet-w48_8xb32-210e_coco-256x192.py'
-#     # config.mmpose_ckpt_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_hrnet-w48_8xb32-210e_coco-256x192-0e67c616_20220913.pth'
-
-#     # config.mmpose_config_file = config.mmpose_root_dir + 'ckpts/' + 'td-hm_litehrnet-30_8xb64-210e_coco-256x192.py'
-#     # config.mmpose_ckpt_file = config.mmpose_root_dir + 'ckpts/' + 'litehrnet30_coco_256x192-4176555b_20210626.pth'
-
-#     mmpose.utils.register_all_modules()
-#     model = mmpose.apis.init_model(config.mmpose_config_file, config.mmpose_ckpt_file, device='cpu')  # or device='cuda:0'
-#     return model
-
-# def get_2d_preds(model_2d, inps, labels, config):
-#     mmpose_results = mmpose.apis.inference_topdown(model_2d, labels['img_path'][0])   # fwd pass
-#     mmpose_preds = mmpose_results[0].pred_instances.keypoints[0]
-
-#     # convert kpt format from COCO to H36M
-#     h36m_kpts = pose_processing.convert_kpts_coco_h36m(mmpose_preds)
-
-#     # Reformat & zero hip
-#     poses_2d = h36m_kpts.reshape(-1, 17, 2)
-#     poses_2d -= poses_2d[:,0]  # zero hip
-#     poses_2d = torch.from_numpy(poses_2d).to(config.device)
-
-#     return poses_2d
 
 def cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d,):
     '''
@@ -75,7 +44,11 @@ def unpack_test_data(data, m, model_2d, use_data_file, config, flip_test=True):
         output = SimpleNamespace()
         output.pred_xyz_jts_17 = data[0][:,0].to(config.device)
         labels['target_xyz_17'] = data[0][:,1].to(config.device)
-        img_ids = data[0][:,2,:1].to(config.device)
+        # if theres no img_ids, add dummies
+        if data[0].shape[1] == 2:
+            img_ids = torch.ones(data[0].shape[0], 1) * -1
+        else:
+            img_ids = data[0][:,2,:1].to(config.device)
         poses_2d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)[:,:,:2]    # TEMP: using labels for 2D
     else:
         (inps, labels, img_ids, bboxes) = data
@@ -102,7 +75,8 @@ def eval_gt(cnet, R_cnet, config,
             m=None, gt_eval_dataset=None, 
             testset_path=None, backbone_scale=1.0,
             test_cnet=False, test_adapt=False, 
-            use_data_file=False, mmlab_out=False):
+            use_data_file=False, agora_out=False,
+            subset=None,):
     '''
     '''
     if test_adapt:
@@ -111,15 +85,11 @@ def eval_gt(cnet, R_cnet, config,
         batch_size = 4096
     # Data/Setup
     if use_data_file:
-        if mmlab_out:
-            test_file = config.mmlab_testset_path + '.npy'
-        else:
-            test_file = testset_path
+        test_file = testset_path
         test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
-        if config.test_adapt and (use_data_file == True):
-            test_data = test_data[:config.test_eval_limit]
-        else:
-            test_data = test_data[config.test_eval_subset, :]
+        if subset is None: 
+            subset = config.test_eval_subset
+        test_data = test_data[subset, :]
         test_data *= backbone_scale
         gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
     gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False, 
@@ -141,18 +111,19 @@ def eval_gt(cnet, R_cnet, config,
 
     backbone_preds = []
     corr_preds = []
+    corr_idxs = []
     gts = []
     losses = []
     for it, data in enumerate(tqdm(gt_eval_loader, dynamic_ncols=True)):
         output, labels, img_ids, poses_2d = unpack_test_data(data, m, model_2d, use_data_file, config)
-        backbone_pred = output.pred_xyz_jts_17.reshape(-1, 17, 3)
+        backbone_pred = output.pred_xyz_jts_17.reshape(output.pred_xyz_jts_17.shape[0], -1, 3)
         if test_cnet:
             if config.use_cnet:
                 corrected_pred_init = None
                 if test_adapt:
                     # THIS IS SUPER INNEFICIENT, AND WASTES MY TIME :(
                     cnet.load_cnets(print_str=False)
-                    if config.split_corr_dim_trick:
+                    if len(config.split_corr_dims) > 0:
                         cnet.cnet.eval()
                         corrected_pred_init = cnet(backbone_pred.detach().clone())
                     cnet.cnet.train()
@@ -162,25 +133,38 @@ def eval_gt(cnet, R_cnet, config,
                                                     lr=config.test_adapt_lr)
                     cnet_in = backbone_pred.detach().clone()
                     for i in range(config.adapt_steps):
-                        corrected_pred = cnet(cnet_in)
-                        Rcnet_pred = R_cnet(corrected_pred)
-                        loss = cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d)
-                        loss.backward()
-                        optimizer.step()
                         optimizer.zero_grad()
+                        corrected_pred, corr_idx = cnet(cnet_in, ret_corr_idxs=True)
 
-                        gt_3d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)
-                        # gt_mse = torch.square((backbone_pred[:,config.distal_kpts,:] - gt_3d[:,config.distal_kpts])*config.TTT_errscale).mean()
-                        gt_mse = torch.square((corrected_pred - gt_3d)*config.TTT_errscale).mean()
-                        losses.append([loss.item(), gt_mse.item()])
+                        # only do TTT if there are any corrected samples
+                        if corr_idx.sum() > 0:
+                            Rcnet_pred = R_cnet(corrected_pred)
+                            loss = cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d)
+                            loss.backward()
+                            optimizer.step()
+
+                            gt_3d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)
+                            # gt_mse = torch.square((backbone_pred[:,config.distal_kpts,:] - gt_3d[:,config.distal_kpts])*config.TTT_errscale).mean()
+                            gt_mse = torch.square((corrected_pred - gt_3d)*config.TTT_errscale).mean()
+                            losses.append([loss.item(), gt_mse.item()])
 
                 with torch.no_grad():
                     # get corrected pred, with adjusted cnet
                     cnet_in = backbone_pred
-                    corrected_pred = cnet(cnet_in)
-                    if test_adapt and config.split_corr_dim_trick:
-                        # correct z with initial CNet, leaving x/y corrected with tuned CNet
-                        corrected_pred[:, :, 2] = corrected_pred_init[:, :, 2]
+                    corrected_pred, batch_corr_idxs = cnet(cnet_in, ret_corr_idxs=True)
+                    corr_idxs.append(batch_corr_idxs)
+                    # Only correct specified CNet corr dims
+                    if len(config.cnet_dont_corr_dims) > 0:
+                        corrected_pred_init = backbone_pred.detach().clone()
+                        corrected_pred[:, :, config.cnet_dont_corr_dims] = corrected_pred_init[:, :, config.cnet_dont_corr_dims]
+                    # Only use TTT improved preds for specified dims
+                    # if config.split_corr_dim_trick:
+                    if len(config.split_corr_dims) > 0:
+                        if corrected_pred_init is None:
+                            corrected_pred_init = backbone_pred.detach().clone()
+
+                        corrected_pred[:, :, config.split_corr_dims] = corrected_pred_init[:, :, config.split_corr_dims]
+
                 corrected_pred = corrected_pred.reshape(labels['target_xyz_17'].shape[0], -1)
                 output.pred_xyz_jts_17 = corrected_pred
             else:
@@ -201,35 +185,31 @@ def eval_gt(cnet, R_cnet, config,
 
     # Investigation of TTT loss
     if test_adapt:
-        losses = np.array(losses)
+        TTT_losses = np.array(losses)
         # save losses
         TTT_losses_outpath = '../../outputs/TTT_losses/'
+        dataset_name = testset_path.split('/')[-2]
+        if dataset_name != 'PW3D':
+            TTT_losses_outpath += dataset_name + '_'
         backbone_name = testset_path.split('/')[-1].split('.')[-2]
         TTT_losses_outpath +=  '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
-        np.save(TTT_losses_outpath, losses)
-        # if config.TTT_loss == 'consistency':
-            # utils.quick_plot.simple_2d_plot(losses, save_dir='../../outputs/testset/Knees_losses_consist.png', 
-            #                                 title='Knees Consist. Loss vs GT 3D distals MSE', 
-            #                                 xlabel='Consistency Loss', ylabel='GT 3D MSE Loss for Distals',
-            #                                 # x_lim=[0, 25], y_lim=[0, 7500])
-            #                                 # x_lim=[0, 1000], y_lim=[0, 7500])
-            #                                 x_lim=[0, 100], y_lim=[0, 750])
-        # if config.TTT_loss == 'reproj_2d':
-            # utils.quick_plot.simple_2d_plot(losses, save_dir='../../outputs/testset/losses_2d.png', 
-            #                                 title='2D reproj. Loss vs GT 3D distals MSE', 
-            #                                 xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss for Distals',
-            #                                 x_lim=[0,1], y_lim=[0, 7500])
+        np.save(TTT_losses_outpath, TTT_losses)
 
-    # save updated file for mmlab eval (preds, gts, ids)
-    if mmlab_out:
-        test_data = torch.from_numpy(np.load(test_file)).float()
-        # replace preds with corrected preds
-        for id in kpt_all_pred.keys():
-            test_data[0, np.where(test_data[2,:,0]==id)] = torch.from_numpy(kpt_all_pred[id]['xyz_17']).reshape(1,1,51)
+    # save corrected preds for agora eval
+    if agora_out:
+        agora_corr_preds = np.concatenate(corr_preds, axis=0)
+        # order was scrambled according to config.test_eval_subset, so we need to reverse it 
+        # (since agora is expecting the original order)
+        reverse_idxs = [np.where(np.array(config.test_eval_subset) == i)[0][0] for i in range(len(config.test_eval_subset))]
+        agora_corr_preds = agora_corr_preds[reverse_idxs]
+
         # save npy file
-        test_out_file = config.mmlab_testset_path + '_corrected.npy'
-        print("Saving corrected preds to {} for mmlab eval...".format(test_out_file))
-        np.save(test_out_file, test_data.cpu().data.numpy())    
+        if test_adapt:
+            test_out_file = testset_path.replace('_test.npy', '_corrected_+TTT.npy')
+        else:
+            test_out_file = testset_path.replace('_test.npy', '_corrected.npy')
+        print("Saving corrected preds to {} for AGORA eval...".format(test_out_file))
+        np.save(test_out_file, agora_corr_preds)
     
     # concat all preds and gts
     backbone_preds = np.concatenate(backbone_preds, axis=0)
@@ -243,47 +223,77 @@ def eval_gt(cnet, R_cnet, config,
     backbone_preds *= 1000
     corr_preds *= 1000
     gts *= 1000
+
+    corr_idxs = np.concatenate(corr_idxs, axis=0)
+
+    # Save Energy scores and gt MSEs for plotting
+    if config.use_cnet_energy:
+        bb_e_scores = torch.logsumexp(torch.tensor(backbone_preds.reshape(backbone_preds.shape[0], -1)), dim=-1)
+        gt_mses = np.square((backbone_preds - gts)).mean((1,2)).reshape(-1,1)
+        energies_losses = np.concatenate([bb_e_scores.reshape(-1,1), gt_mses], axis=1)
+
+        energies_outpath = '../../outputs/energies/'
+        dataset_name = testset_path.split('/')[-2]
+        if dataset_name != 'PW3D':
+            energies_outpath += dataset_name + '_'
+        backbone_name = testset_path.split('/')[-1].split('.')[-2]
+        energies_outpath +=  '_'.join([backbone_name, 'energies.npy'])
+        np.save(energies_outpath, energies_losses)
+    
     # get metrics
-    backbone_mpjpe = np.sqrt(((backbone_preds - gts)**2).sum(2)).mean()
-    corr_mpjpe = np.sqrt(((corr_preds - gts)**2).sum(2)).mean()
-
-    backbone_pa_mpjpe = np.zeros((gts.shape[0], len(config.EVAL_JOINTS)))
-    corr_pa_mpjpe = np.zeros((gts.shape[0], len(config.EVAL_JOINTS)))
-    backbone_err = np.zeros((gts.shape[0], 3))
-    corr_err = np.zeros((gts.shape[0], 3))
-    for i, (backbone_pred, corr_pred, gt) in enumerate(zip(backbone_preds, corr_preds, gts)):
-        backbone_pred_pa = pose_processing.compute_similarity_transform(backbone_pred.copy(), gt.copy())
-        corr_pred_pa = pose_processing.compute_similarity_transform(corr_pred.copy(), gt.copy())
-
-        backbone_pa_mpjpe[i] = np.sqrt(((backbone_pred_pa - gt)**2).sum(1))
-        corr_pa_mpjpe[i] = np.sqrt(((corr_pred_pa - gt)**2).sum(1))
-
-        backbone_err[i,0] = np.abs(backbone_pred[:,0] - gt[:,0]).mean()
-        backbone_err[i,1] = np.abs(backbone_pred[:,1] - gt[:,1]).mean()
-        backbone_err[i,2] = np.abs(backbone_pred[:,2] - gt[:,2]).mean()
-        corr_err[i,0] = np.abs(corr_pred[:,0] - gt[:,0]).mean()
-        corr_err[i,1] = np.abs(corr_pred[:,1] - gt[:,1]).mean()
-        corr_err[i,2] = np.abs(corr_pred[:,2] - gt[:,2]).mean()
-
-    backbone_pa_mpjpe = backbone_pa_mpjpe.mean()
-    backbone_err = backbone_err.mean(0)
-    corr_pa_mpjpe = corr_pa_mpjpe.mean()
-    corr_err = corr_err.mean(0)
+    num_tails = [
+        int(0.05*gts.shape[0]),
+        int(0.10*gts.shape[0]),
+        int(0.25*gts.shape[0]),
+    ]
+    corr_res, bb_res, att_res = metrics.get_P1_P2(backbone_preds, corr_preds, gts, 
+                                                       corr_idxs,
+                                                       num_tails, config)
+    corr_pa_mpjpe_all, corr_pa_mpjpe_tails, corr_mpjpe_all, corr_mpjpe_tails, corr_err = corr_res
+    bb_pa_mpjpe_all, bb_pa_mpjpe_tails, bb_mpjpe_all, bb_mpjpe_tails, backbone_err = bb_res
+    att_corr_mpjpe, att_corr_pa_mpjpe, att_corr_err, att_bb_mpjpe, att_bb_pa_mpjpe, att_bb_err = att_res
 
     eval_summary_json = {
         'corrected': {
-            'PA-MPJPE': corr_pa_mpjpe,
-            'MPJPE': corr_mpjpe,
+            'PA-MPJPE': corr_pa_mpjpe_all,
+            '(P1 ^25%)': corr_pa_mpjpe_tails[2],
+            '(P1 ^10%)': corr_pa_mpjpe_tails[1],
+            '(P1 ^5%)': corr_pa_mpjpe_tails[0],
+            'MPJPE': corr_mpjpe_all,
+            '(P2 ^25%)': corr_mpjpe_tails[2],
+            '(P2 ^10%)': corr_mpjpe_tails[1],
+            '(P2 ^5%)': corr_mpjpe_tails[0],
             'x': corr_err[0],
             'y': corr_err[1],
             'z': corr_err[2],
         },
         'backbone': {
-            'PA-MPJPE': backbone_pa_mpjpe,
-            'MPJPE': backbone_mpjpe,
+            'PA-MPJPE': bb_pa_mpjpe_all,
+            '(P1 ^25%)': bb_pa_mpjpe_tails[2],
+            '(P1 ^10%)': bb_pa_mpjpe_tails[1],
+            '(P1 ^5%)': bb_pa_mpjpe_tails[0],
+            'MPJPE': bb_mpjpe_all,
+            '(P2 ^25%)': bb_mpjpe_tails[2],
+            '(P2 ^10%)': bb_mpjpe_tails[1],
+            '(P2 ^5%)': bb_mpjpe_tails[0],
             'x': backbone_err[0],
             'y': backbone_err[1],
             'z': backbone_err[2],
-        }
+        },
+        'attempted_backbone': {
+            'PA-MPJPE': att_bb_pa_mpjpe,
+            'MPJPE': att_bb_mpjpe,
+            'x': att_bb_err[0],
+            'y': att_bb_err[1],
+            'z': att_bb_err[2],
+        },
+        'attempted_corr': {
+            'PA-MPJPE': att_corr_pa_mpjpe,
+            'MPJPE': att_corr_mpjpe,
+            'x': att_corr_err[0],
+            'y': att_corr_err[1],
+            'z': att_corr_err[2],
+            '(num_samples)': int(corr_idxs.sum().item()),
+        },
     }
     return eval_summary_json

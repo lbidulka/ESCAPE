@@ -142,8 +142,8 @@ test_hp3d_pipeline = [
 ]
 
 data = dict(
-    samples_per_gpu=32,
-    workers_per_gpu=1,
+    samples_per_gpu=128,
+    workers_per_gpu=8,
     train=dict(
         type='MixedDataset',
         configs=[
@@ -177,7 +177,7 @@ data = dict(
         type=dataset_type,
         dataset_name='mpi_inf_3dhp',
         data_prefix='data',
-        pipeline=train_pipeline,
+        pipeline=test_pipeline,
         ann_file='hybrik_mpi_inf_3dhp_train.npz'),
     test=dict(
         type=dataset_type,
