@@ -10,7 +10,7 @@ import pickle
 
 # print("\n", os.getcwd(), "\n", sys.path, "\n")
 
-import optuna
+# import optuna
 import json
 
 import numpy as np
@@ -27,10 +27,10 @@ from config import get_config
 
 from utils.optuna_objectives import optuna_objective
 from utils.AMASS import make_amass_kpts
-from utils.output_reporting import plot_TTT_loss, plot_TTT_train_corr, plot_energies, print_test_summary
+from utils.output_reporting import plot_TTT_loss, test_trainsets, plot_energies, print_test_summary
 
 
-def test(cnet, R_cnet, config, print_summary=True):
+def test(cnet, R_cnet, config, print_summary=True, agora_out=False):
     # Get HybrIK model if required
     if config.TTT_from_file == False:
         backbone, backbone_cfg = load_hybrik(config)
@@ -53,15 +53,19 @@ def test(cnet, R_cnet, config, print_summary=True):
             if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets(print_str=False)
             TTT_eval_summary = eval_gt(cnet, R_cnet, config, backbone, testset, 
                                        testset_path=test_path, backbone_scale=test_scale, 
-                                       test_cnet=True, test_adapt=True, use_data_file=config.TTT_from_file)
+                                       test_cnet=True, test_adapt=True, use_data_file=config.TTT_from_file,
+                                       agora_out=agora_out)
         cnet.load_cnets(print_str=False)
         eval_summary = eval_gt(cnet, R_cnet, config, testset, backbone, 
-                               testset_path=test_path, backbone_scale=test_scale, test_cnet=True, use_data_file=True)
+                               testset_path=test_path, backbone_scale=test_scale, test_cnet=True, use_data_file=True,
+                               agora_out=agora_out)
         summary[test_backbone]['vanilla'] = eval_summary['backbone']
         summary[test_backbone]['w/CN'] = eval_summary['corrected']
         summary[test_backbone]['at V'] = eval_summary['attempted_backbone']
-        summary[test_backbone]['at C'] = eval_summary['attempted_corr']        
-        if TTT_eval_summary: summary[test_backbone]['+TTT'] = TTT_eval_summary['corrected']
+        summary[test_backbone]['at C'] = eval_summary['attempted_corr']
+        if TTT_eval_summary: 
+            summary[test_backbone]['+TTT'] = TTT_eval_summary['corrected']
+            summary[test_backbone]['aTTT'] = TTT_eval_summary['attempted_corr']
     if print_summary: print_test_summary(summary)
     return summary
 
@@ -71,13 +75,11 @@ def setup_adapt_nets(config):
         cnet = multi_distal(config)
         R_cnet = None # TODO: MULTI-DISTAL R-CNET
     else:
-        cnet = adapt_net(config, target_kpts=config.cnet_targets,)
-                        # in_kpts=[kpt for kpt in range(17) if kpt not in config.cnet_targets])
-                        # in_kpts=[kpt for kpt in range(17) if kpt not in [9,10]])
+        cnet = adapt_net(config, target_kpts=config.cnet_targets,
+                        in_kpts=config.EVAL_JOINTS)
         R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
-                           R=True,)
-                        #    in_kpts=[kpt for kpt in range(17) if kpt not in [9,10]])
-                        #    in_kpts=[kpt for kpt in range(17) if kpt not in config.rcnet_targets])
+                           R=True,
+                        in_kpts=config.EVAL_JOINTS)
     return cnet, R_cnet
 
 def main_worker(config): 
@@ -102,14 +104,22 @@ def main_worker(config):
         elif task == 'cotrain':
             cotrainer = CoTrainer(cnet, R_cnet)
             cotrainer.train()
+
         elif task == 'test':
             test(cnet, R_cnet, config)
         elif task == 'plot_TTT_loss':
             plot_TTT_loss(config)
         elif task == 'plot_TTT_train_corr':
-            plot_TTT_train_corr(cnet, R_cnet, config,)
-        elif task == 'plot_energies':
-            plot_energies(config)
+            test_trainsets(cnet, R_cnet, config,)
+            plot_TTT_loss(config, task='train')
+        elif task == 'plot_test_energies':
+            plot_energies(config, task='test')
+        elif task == 'plot_train_energies':
+            test_trainsets(cnet, R_cnet, config,)
+            plot_energies(config, task='train')
+        elif task == 'export_agora':
+            test(cnet, R_cnet, config, agora_out=True)
+
         elif task == 'optuna_CNet':
             study = optuna.create_study(directions=['minimize', 'minimize'])
             study.optimize(optuna_objective('CNet', config, cnet, R_cnet, test), n_trials=config.optuna_num_trials,)
