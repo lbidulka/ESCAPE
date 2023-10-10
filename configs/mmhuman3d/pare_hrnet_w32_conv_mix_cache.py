@@ -176,7 +176,7 @@ cache_files = {
 }
 data = dict(
     samples_per_gpu=256,
-    workers_per_gpu=16,
+    workers_per_gpu=8,
     train=dict(
         type='MixedDataset',
         configs=[
