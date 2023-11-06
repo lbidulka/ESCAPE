@@ -1,6 +1,7 @@
 import argparse
 import os
 import os.path as osp
+from tqdm import tqdm
 
 import mmcv
 import torch
@@ -30,21 +31,28 @@ def get_config(args, ):
 
     # Tasks
     # config.tasks = ['gen_preds', 'eval', 'gen_cnet_data',]
-    config.tasks = ['gen_preds', 'eval', 'gen_cnet_data',]
+    # config.tasks = ['gen_preds', 'eval', 'gen_cnet_data',]
     config.tasks = ['gen_preds', 'gen_cnet_data',]
+    # config.tasks = ['gen_preds', 'gen_cnet_feats',]
     # config.tasks = ['gen_preds']
     # config.tasks = ['gen_cnet_data']
-    config.save_preds = True    # Save the generated preds?
+    config.tasks = ['get_inference_time']
+    config.save_preds = False    # Save the generated preds?
 
     # Backbone generation settings
-    config.backbone = 'bal_mse'  # 'spin' 'pare' 'cliff' 'bal_mse' 'hybrik'
-    config.dataset = 'HP3D' # 'PW3D' 'MPii' 'HP3D' 'coco' 
+    config.backbone = 'spin'  # 'spin' 'pare' 'cliff' 'bal_mse' 'hybrik'
+    config.dataset = 'PW3D' # 'PW3D' 'MPii' 'HP3D_train' 'HP3D_test' 'coco' 
     config.subset_len = 200_000 # hp3d: 110k, pwd3d: 35k, mpii: 14810, coco2017: 40055
     set_model_and_data_config(config)
 
     # Paths
     config.cnet_data_path = '/data/lbidulka/adapt_3d/'
-    config.cnet_dataset_path = '{}{}/mmlab_{}_cnet_{}'.format(config.cnet_data_path, config.dataset, config.backbone, 
+    if config.dataset == 'HP3D_test':
+        config.cnet_dataset_path = '{}{}/mmlab_{}_{}'.format(config.cnet_data_path, 'HP3D', config.backbone, 'test') 
+    elif config.dataset == 'HP3D_train':
+        config.cnet_dataset_path = '{}{}/mmlab_{}_cnet_{}'.format(config.cnet_data_path, 'HP3D', config.backbone, 'train') 
+    else:
+        config.cnet_dataset_path = '{}{}/mmlab_{}_cnet_{}'.format(config.cnet_data_path, config.dataset, config.backbone, 
                                                              'test' if (config.dataset == 'PW3D') else 'train') 
     return config
 
@@ -60,8 +68,10 @@ def set_model_and_data_config(config):
             config.eval_data = 'test'
         elif config.dataset == 'coco':    # train2017
             config.eval_data = 'coco_eval'
-        elif config.dataset == 'HP3D':
+        elif config.dataset == 'HP3D_train':
             config.eval_data = 'hp3d_eval'
+        elif config.dataset == 'HP3D_test':
+            config.eval_data = 'hp3d_test_eval'
         else:
             raise NotImplementedError
     # Spin
@@ -73,8 +83,10 @@ def set_model_and_data_config(config):
             config.eval_data = 'test'
         elif config.dataset == 'MPii':
             config.eval_data = 'mpii_eval'
-        elif config.dataset == 'HP3D':
+        elif config.dataset == 'HP3D_train':
             config.eval_data = 'hp3d_eval'
+        elif config.dataset == 'HP3D_test':
+            config.eval_data = 'hp3d_test_eval'
         else:
             raise NotImplementedError
     # Cliff
@@ -84,8 +96,10 @@ def set_model_and_data_config(config):
         config.args.work_dir = 'work_dirs/cliff'
         if config.dataset == 'PW3D':
             config.eval_data = 'test'
-        elif config.dataset == 'HP3D':
+        elif config.dataset == 'HP3D_train':
             config.eval_data = 'hp3d_eval'
+        elif config.dataset == 'HP3D_test':
+            config.eval_data = 'hp3d_test_eval'
         elif config.dataset == 'MPii':
             config.eval_data = 'mpii_eval'
         else: 
@@ -97,8 +111,10 @@ def set_model_and_data_config(config):
         config.args.work_dir = 'work_dirs/pare'
         if config.dataset == 'PW3D':
             config.eval_data = 'test'
-        elif config.dataset == 'HP3D':
+        elif config.dataset == 'HP3D_train':
             config.eval_data = 'hp3d_eval'
+        elif config.dataset == 'HP3D_test':
+            config.eval_data = 'hp3d_test_eval'
         elif config.dataset == 'MPii':
             config.eval_data = 'mpii_eval'
         else: 
@@ -110,8 +126,10 @@ def set_model_and_data_config(config):
         config.args.work_dir = 'work_dirs/bal_mse'
         if config.dataset == 'PW3D':
             config.eval_data = 'test'
-        elif config.dataset == 'HP3D':
+        elif config.dataset == 'HP3D_train':
             config.eval_data = 'hp3d_eval'
+        elif config.dataset == 'HP3D_test':
+            config.eval_data = 'hp3d_test_eval'
         elif config.dataset == 'MPii':
             config.eval_data = 'mpii_eval'
         else: 
@@ -170,6 +188,70 @@ def parse_args():
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
     return args
+
+def get_inference_time(config, eval_data):
+    args = config.args
+    cfg = mmcv.Config.fromfile(args.config)
+    if args.cfg_options is not None:
+        cfg.merge_from_dict(args.cfg_options)
+    # set cudnn_benchmark
+    if cfg.get('cudnn_benchmark', False):
+        torch.backends.cudnn.benchmark = True
+    cfg.data.test.test_mode = True
+
+    # build the dataloader
+    print("Building dataset...")
+    dataset = build_dataset(cfg.data[eval_data])
+    dataset = torch.utils.data.Subset(dataset, torch.randperm(len(dataset))[:config.subset_len])
+    # the extra round_up data will be removed during gpu/cpu collect
+    data_loader = build_dataloader(
+        dataset,
+        samples_per_gpu=2,
+        workers_per_gpu=1,
+        dist=False,
+        shuffle=False,
+        round_up=False)
+
+    # build the model and load checkpoint
+    model = build_architecture(cfg.model)
+    fp16_cfg = cfg.get('fp16', None)
+    if fp16_cfg is not None:
+        wrap_fp16_model(model)
+    load_checkpoint(model, args.checkpoint, map_location='cpu')
+
+    if args.device == 'cuda:0': device_id = 0
+    elif args.device == 'cuda:1': device_id = 1
+    model = MMDataParallel(model, device_ids=[device_id])
+
+    model.eval()
+
+    sample = next(iter(data_loader))
+    # sample['img'].to(device_id)
+
+    # INIT LOGGERS
+    starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    repetitions = 10_000
+    timings = np.zeros((repetitions,1))
+    # GPU-WARM-UP
+    for _ in range(10):
+        _ = model(return_loss=False, **sample)
+    print("Measuring...")
+    # MEASURE PERFORMANCE
+    with torch.no_grad():
+        for rep in range(repetitions):
+            starter.record()
+            _ = model(return_loss=False, **sample)
+            ender.record()
+            # WAIT FOR GPU SYNC
+            torch.cuda.synchronize()
+            curr_time = starter.elapsed_time(ender)
+            timings[rep] = curr_time
+    # REPORT    
+    mean_syn = np.sum(timings) / repetitions
+    std_syn = np.std(timings)
+    print(f'\nINFERENCE TIME OF {config.backbone}, {repetitions} REPS:')
+    print(f'mean: {round(mean_syn, 4)} ms,  std: {round(std_syn,4)} ms')
+
 
 def gen_preds(config, cfg, dataset, data_loader):
     args = config.args
@@ -248,15 +330,40 @@ def main():
             eval_results = dataset.dataset.evaluate(outputs, args.work_dir, **eval_cfg)
             print(eval_results)
         elif task == 'gen_cnet_data':
-            print("Saving {} pred dataset to {}".format(config.backbone, config.cnet_dataset_path + '.npy'))
+            out_path = config.cnet_dataset_path + '.npy'
+            print("Saving {} pred dataset to {}".format(dataset, out_path))
             # change to CNet format
             scale = 1000
             backbone_preds = (results['preds'] / scale).reshape(results['preds'].shape[0], -1)
             target_xyz_17s = (results['gts'] / scale).reshape(results['gts'].shape[0], -1)
             img_idss = np.repeat(results['ids'].reshape(-1,1), backbone_preds.shape[1], axis=1)
             
-            out_path = config.cnet_dataset_path + '.npy'
             np.save(out_path, np.array([backbone_preds, target_xyz_17s, img_idss,]))
+        elif task == 'gen_cnet_feats':
+            out_path = config.cnet_dataset_path + '_feats'
+            print("Saving {} pred features to {}".format(dataset, out_path))
+            
+            features = []
+            for batch in outputs:
+                features.append(batch['features'])
+            features = np.concatenate(features)
+            # change to CNet format
+            # scale = 1000
+            # backbone_preds = (results['preds'] / scale).reshape(results['preds'].shape[0], -1)
+            # target_xyz_17s = (results['gts'] / scale).reshape(results['gts'].shape[0], -1)
+            # img_idss = np.repeat(results['ids'].reshape(-1,1), backbone_preds.shape[1], axis=1)
+            
+            # save each feature vector to a file
+            for i, feat in enumerate(tqdm(features)):
+                # insert '/feature_maps/' right before 'mmlab'
+                save_path = config.cnet_dataset_path
+                save_path = save_path[:save_path.find('mmlab')] + 'feature_maps/' + save_path[save_path.find('mmlab'):]
+                save_path = save_path.replace('_cnet_', '_')
+
+                np.save(save_path + f'/{results["ids"][i]}.npy', feat)
+            # np.save(out_path, np.array([features, img_idss,]))
+        elif task == 'get_inference_time':
+            get_inference_time(config, config.eval_data)
         elif task != 'gen_preds':   # not the cleanest way to do this
             raise NotImplementedError
 
