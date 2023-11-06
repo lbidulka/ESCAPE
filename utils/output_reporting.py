@@ -4,30 +4,35 @@ import numpy as np
 import utils.quick_plot
 from core.cnet_eval import eval_gt
 
-def print_test_summary(summary):
+def print_test_summary(config, all_summary):
     '''
     args:
         summary: dict of dicts, where each dict is a summary of the testset using a different backbone
     '''
     print('\n##### TEST SUMMARY #####')
-    print('P1: PA-MPJPE, P2: MPJPE')
-    for backbone in summary.keys():
-        print('-- {}: --'.format(backbone), end=' ')
-        for test in summary[backbone].keys():
-            print('\n   {}:    '.format(test if test == 'vanilla' else ('   ' + test)), end=' ')
-            for key in summary[backbone][test].keys():
-                if key in ['PA-MPJPE', 'MPJPE', 'x',]:
-                    print(' || ', end=' ')
-                if test == 'vanilla' or test == 'at V' or key == '(num_samples)':
-                    print('{}: {:7.2f},'.format(key, summary[backbone][test][key]), end=' ')
+    for dataset in all_summary.keys():
+        summary = all_summary[dataset]
+        print('{}:'.format(dataset))
+        for backbone in summary.keys():
+            print('-- {}: --'.format(backbone,), end=' ')
+            for test in summary[backbone].keys():
+                if test in ['at V', 'at C'] and not config.use_cnet_energy:
+                    pass
                 else:
-                    if test == 'at C' or test == 'aTTT':
-                        ref_test = 'at V'
-                    else:
-                        ref_test = 'vanilla'
-                    diff = summary[backbone][test][key] - summary[backbone][ref_test][key]
-                    print('{}: {:7.2f},'.format(key, diff), end=' ')
-        print('\n')
+                    print('\n   {}:    '.format(test if test == 'vanilla' else ('   ' + test)), end=' ')
+                    for key in summary[backbone][test].keys():
+                        if key in ['PA-MPJPE', 'MPJPE', 'x', 3]:
+                            print(' || ', end=' ')
+                        if test == 'vanilla' or test == 'at V' or key == '(num_samples)':
+                            print('{}: {:7.2f},'.format(key, summary[backbone][test][key]), end=' ')
+                        else:
+                            if test == 'at C' or test == 'aTTT':
+                                ref_test = 'at V'
+                            else:
+                                ref_test = 'vanilla'
+                            diff = summary[backbone][test][key] - summary[backbone][ref_test][key]
+                            print('{}: {:7.2f},'.format(key, diff), end=' ')
+            print('\n')
 
 def plot_energies(config, task):
     ''' 
@@ -70,42 +75,45 @@ def plot_TTT_loss(config, task='test'):
     Loads up the losses and plots them
     '''
     print("Plotting TTT Losses...", end=' ')
-    loss_paths = config.cnet_testset_paths if task == 'test' else config.cnet_trainset_paths
-    # combine rcnet target names
-    rcnet_targets_name = ''
-    for target in config.rcnet_targets_name:
-        rcnet_targets_name += target + '_'
-    TTT_losses_outpath = '../../outputs/TTT_losses/'
-    losses = []
-    # iterate overall all backbones 
-    for out_path in loss_paths:
-        backbone_name = out_path.split('/')[-1].split('.')[-2]
-        dataset_name = out_path.split('/')[-2]
-        loss_path = TTT_losses_outpath
-        if dataset_name != 'PW3D':
+    datasets = config.testsets if task == 'test' else config.trainsets
+    for dataset in datasets:
+        if task == 'test':
+            loss_paths = config.testset_info[dataset]['paths']
+        else:
+            loss_paths = config.cnet_trainset_paths
+        # combine rcnet target names
+        rcnet_targets_name = ''
+        for target in config.rcnet_targets_name:
+            rcnet_targets_name += target + '_'
+        TTT_losses_outpath = '../../outputs/TTT_losses/'
+        losses = []
+        # iterate overall all backbones 
+        for out_path in loss_paths:
+            backbone_name = out_path.split('/')[-1].split('.')[-2]
+            dataset_name = out_path.split('/')[-2]
+            loss_path = TTT_losses_outpath
+            # if dataset_name != 'PW3D':
             loss_path += dataset_name + '_'
-        loss_path += '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
-        bb_losses = np.load(loss_path)
-        losses.append(bb_losses)
-    losses = np.concatenate(losses)
+            loss_path += '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
+            bb_losses = np.load(loss_path)
+            losses.append(bb_losses)
+        losses = np.concatenate(losses)
 
-    save_dir = '../../outputs/testset/test_' if task == 'test' else '../../outputs/trainset/train_'
-    title = 'Testset ' if task == 'test' else 'Trainset '
-    if config.TTT_loss == 'consistency':
-        save_dir += rcnet_targets_name + '_consist_losses.png'
-        title += rcnet_targets_name + ' Consist. Loss vs GT 3D MSE'
-        utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
-                                        xlabel='Consistency Loss', ylabel='GT 3D MSE Loss',
-                                        # x_lim=[0, 25], y_lim=[0, 7500])
-                                        # x_lim=[0, 1000], y_lim=[0, 7500])
-                                        x_lim=[0, 75], y_lim=[0, 200], alpha=0.15)
-    if config.TTT_loss == 'reproj_2d':
-        save_dir += rcnet_targets_name + '_reproj_2d_losses.png'
-        title += rcnet_targets_name + ' 2D reproj. Loss vs GT 3D MSE'
-        utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
-                                        xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss',
-                                        x_lim=[0,1], y_lim=[0, 7500], alpha=0.1)
-    print("saved to {}".format(save_dir))
+        save_dir = f'../../outputs/{task}set/{dataset}_{task}_'
+        title = 'Testset ' if task == 'test' else 'Trainset '
+        if config.TTT_loss == 'consistency':
+            save_dir += rcnet_targets_name + '_consist_losses.png'
+            title += rcnet_targets_name + ' Consist. Loss vs GT 3D MSE'
+            utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
+                                            xlabel='Consistency Loss', ylabel='GT 3D MSE Loss',
+                                            x_lim=[0, 1], y_lim=[0, 200], alpha=0.15)
+        if config.TTT_loss == 'reproj_2d':
+            save_dir += rcnet_targets_name + '_reproj_2d_losses.png'
+            title += rcnet_targets_name + ' 2D reproj. Loss vs GT 3D MSE'
+            utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
+                                            xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss',
+                                            x_lim=[0,1], y_lim=[0, 7500], alpha=0.1)
+        print("saved to {}".format(save_dir))
 
 def test_trainsets(cnet, R_cnet, config, print_summary=True):
     if not (config.TTT_loss == 'consistency'):

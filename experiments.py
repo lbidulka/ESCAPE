@@ -21,6 +21,7 @@ det_transform = T.Compose([T.ToTensor()])
 from datasets.hybrik import load_hybrik, get_datasets, make_hybrik_pred_dataset
 from cnet.multi_distal import multi_distal
 from cnet.full_body import adapt_net
+from cnet.full_body_feats import adapt_net as adapt_net_feats
 from cnet.cotrain import CoTrainer
 from core.cnet_eval import eval_gt
 from config import get_config
@@ -42,31 +43,35 @@ def test(cnet, R_cnet, config, print_summary=True, agora_out=False):
     if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
     if backbone is not None: backbone.to(config.device)
 
-    summary = {}
-    for test_path, test_scale, test_backbone in zip(config.cnet_testset_paths, 
-                                                    config.cnet_testset_scales, 
-                                                    config.cnet_testset_backbones):
-        summary[test_backbone] = {}
-        TTT_eval_summary = None
-        cnet.load_cnets(print_str=False)
-        if config.test_adapt:
-            if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets(print_str=False)
-            TTT_eval_summary = eval_gt(cnet, R_cnet, config, backbone, testset, 
-                                       testset_path=test_path, backbone_scale=test_scale, 
-                                       test_cnet=True, test_adapt=True, use_data_file=config.TTT_from_file,
-                                       agora_out=agora_out)
-        cnet.load_cnets(print_str=False)
-        eval_summary = eval_gt(cnet, R_cnet, config, testset, backbone, 
-                               testset_path=test_path, backbone_scale=test_scale, test_cnet=True, use_data_file=True,
-                               agora_out=agora_out)
-        summary[test_backbone]['vanilla'] = eval_summary['backbone']
-        summary[test_backbone]['w/CN'] = eval_summary['corrected']
-        summary[test_backbone]['at V'] = eval_summary['attempted_backbone']
-        summary[test_backbone]['at C'] = eval_summary['attempted_corr']
-        if TTT_eval_summary: 
-            summary[test_backbone]['+TTT'] = TTT_eval_summary['corrected']
-            summary[test_backbone]['aTTT'] = TTT_eval_summary['attempted_corr']
-    if print_summary: print_test_summary(summary)
+    allsets_summary = {}
+    for testset_name, info in config.testset_info.items():
+        summary = {}
+        for test_path, test_scale, test_backbone in zip(info['paths'], info['scales'], info['backbones']):
+            summary[test_backbone] = {}
+            TTT_eval_summary = None
+            cnet.load_cnets(print_str=False)
+            if config.test_adapt:
+                if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets(print_str=False)
+                TTT_eval_summary = eval_gt(cnet, R_cnet, config, backbone, testset, 
+                                        testset_path=test_path, backbone_scale=test_scale, 
+                                        test_adapt=True, use_data_file=config.TTT_from_file,
+                                        subset=config.test_eval_subsets[testset_name],
+                                        agora_out=agora_out)
+            cnet.load_cnets(print_str=False)
+            eval_summary = eval_gt(cnet, R_cnet, config, testset, backbone, 
+                                testset_path=test_path, backbone_scale=test_scale, use_data_file=True,
+                                subset=config.test_eval_subsets[testset_name],
+                                agora_out=agora_out,)
+            summary[test_backbone]['vanilla'] = eval_summary['backbone']
+            summary[test_backbone]['w/CN'] = eval_summary['corrected']
+            summary[test_backbone]['at V'] = eval_summary['attempted_backbone']
+            summary[test_backbone]['at C'] = eval_summary['attempted_corr']
+            if TTT_eval_summary: 
+                summary[test_backbone]['+TTT'] = TTT_eval_summary['corrected']
+                summary[test_backbone]['aTTT'] = TTT_eval_summary['attempted_corr']
+        allsets_summary[testset_name] = summary
+    if print_summary: 
+        print_test_summary(config, allsets_summary)
     return summary
 
 def setup_adapt_nets(config):
@@ -75,11 +80,17 @@ def setup_adapt_nets(config):
         cnet = multi_distal(config)
         R_cnet = None # TODO: MULTI-DISTAL R-CNET
     else:
-        cnet = adapt_net(config, target_kpts=config.cnet_targets,
-                        in_kpts=config.EVAL_JOINTS)
-        R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
-                           R=True,
-                        in_kpts=config.EVAL_JOINTS)
+        if config.use_features:
+            cnet = adapt_net_feats(config, target_kpts=config.cnet_targets, 
+                             in_kpts=config.EVAL_JOINTS)
+            R_cnet = adapt_net_feats(config, target_kpts=config.rcnet_targets, R=True, 
+                               in_kpts=config.EVAL_JOINTS)
+        else:
+            cnet = adapt_net(config, target_kpts=config.cnet_targets,
+                            in_kpts=config.EVAL_JOINTS)
+            R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
+                            R=True,
+                            in_kpts=config.EVAL_JOINTS)
     return cnet, R_cnet
 
 def main_worker(config): 
@@ -159,7 +170,10 @@ def main_worker(config):
             json.dump(log_json, open(config.optuna_log_path + 'TTT_best_mean_params.json', 'w'))
             with open(config.optuna_log_path + 'TTT_study.pkl', 'wb') as file: 
                 pickle.dump(study, file)
-
+        
+        elif task == 'get_inference_time':
+            from utils.inference_timing import get_inference_time
+            get_inference_time(config, cnet, R_cnet)
         else:
             raise NotImplementedError
     
