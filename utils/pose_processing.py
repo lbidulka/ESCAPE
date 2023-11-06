@@ -78,7 +78,7 @@ def zero_pose_orient(poses, flip=False):
 
     return data_normal
 
-def compute_similarity_transform(S1, S2):
+def compute_similarity_transform(S1, S2, rescale=True, return_trans=False):
     """
     Computes a similarity transform (sR, t) that takes
     a set of 3D points S1 (3 x N) closest to a set of 3D points S2,
@@ -115,7 +115,7 @@ def compute_similarity_transform(S1, S2):
     R = V.dot(Z.dot(U.T))
 
     # 5. Recover scale.
-    scale = np.trace(R.dot(K)) / var1
+    scale = np.trace(R.dot(K)) / var1 if rescale else 1
 
     # 6. Recover translation.
     t = mu2 - scale * (R.dot(mu1))
@@ -126,14 +126,19 @@ def compute_similarity_transform(S1, S2):
     if transposed:
         S1_hat = S1_hat.T
 
-    return S1_hat
+    if return_trans:
+        return S1_hat, scale, R, t
+    else:
+        return S1_hat
 
-def procrustes_torch(X, Y):
+def procrustes_torch(X, Y, use_kpts=[0,1,4,7,8,9,10,13], ret_np=True):
     """
     Reimplementation of MATLAB's `procrustes` function to Numpy.
     """
-    X1=X[:,[0,1,4,7,8,9,10,13]]
-    Y1=Y[:,[0,1,4,7,8,9,10,13]]
+    # X1=X[:,[0,1,4,7,8,9,10,13]]
+    # Y1=Y[:,[0,1,4,7,8,9,10,13]]
+    X1 = X[:,use_kpts]
+    Y1 = Y[:,use_kpts]
     batch,n, m = X1.shape
     batch, ny, my = Y1.shape
 
@@ -158,4 +163,7 @@ def procrustes_torch(X, Y):
 
     Z = torch.matmul(Y0, T) + muX
 
-    return np.array(Z.cpu())
+    if ret_np:
+        return np.array(Z.cpu())
+    else:
+        return Z

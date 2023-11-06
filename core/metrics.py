@@ -7,7 +7,7 @@ def get_PA_MPJPE(preds, gts, config):
     pa_mpjpe = np.zeros((gts.shape[0], len(config.EVAL_JOINTS)))
     err = np.zeros((gts.shape[0], 3))
     for i, (pred, gt) in enumerate(zip(preds, gts)):
-        pred_pa = pose_processing.compute_similarity_transform(pred.copy(), gt.copy())
+        pred_pa = pose_processing.compute_similarity_transform(pred.copy(), gt.copy(), rescale=True)
         pa_mpjpe[i] = np.sqrt(((pred_pa - gt)**2).sum(1))
 
         err[i,0] = np.abs(pred[:,0] - gt[:,0]).mean()
