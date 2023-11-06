@@ -14,11 +14,18 @@ H36M kpts:
 'right_shoulder', 'right_elbow', 'right_wrist', # 16
 '''
 
-RCNET_TARGET_NAMES = {
+RCNET_TARGET_NAMES_OTHER = {
     'Shoulders': [11, 14],
     'Elbows': [12, 15],
     'Hips': [1, 4],
     'Knees': [2, 5],
+}
+
+RCNET_TARGET_NAMES_AGORA = {
+    'Shoulders': [8, 11],
+    'Elbows': [9, 12],
+    'Hips': [0, 3],
+    'Knees': [1, 4],
 }
 
 
@@ -32,6 +39,7 @@ def get_config():
     np.random.seed(config.seed) # For test set random slice
 
     # Tasks
+    # config.tasks = ['make_testset']
     # config.tasks = ['make_trainsets', 'make_testset', 
     #                 'train_CNet', 'make_RCNet_trainset', 'train_RCNet',
     #                 'test', 'plot_TTT_loss'] 
@@ -42,41 +50,52 @@ def get_config():
     # config.tasks = ['pretrain_CNet']
     # config.tasks = ['pretrain_RCNet']
     
-    config.tasks = ['train_CNet', 'make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
+    # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
     config.tasks = ['train_CNet', 'test']
 
     # config.tasks = ['test']
-    # config.tasks = ['test', 'plot_energies']
-    # config.tasks = ['plot_energies']
+    # config.tasks = ['test', 'plot_test_energies']
+    # config.tasks = ['plot_test_energies']
+    # config.tasks = ['plot_train_energies']
 
-    # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss', 'plot_TTT_train_corr']
+    config.tasks = ['make_RCNet_trainset', 'train_RCNet']#, 'test',]# 'plot_TTT_loss', 'plot_TTT_train_corr']
     # config.tasks = ['test', 'plot_TTT_loss',]
 
-    # config.tasks = ['optuna_CNet']
-    # config.tasks = ['optuna_TTT']
+    # config.tasks = ['optuna_CNet', 'optuna_TTT']
 
-    # config.tasks = ['cotrain', 'test', 'plot_TTT_loss']
-    # config.tasks = ['plot_TTT_loss']
+    # config.tasks = ['cotrain', 'test',]# 'plot_TTT_loss']
+
+    # config.tasks = ['train_CNet', 'export_agora']
+
+    config.tasks = ['test']
+    # config.tasks = ['export_agora']
 
     # Main Settings
     config.optuna_num_trials = 1
-    config.print_config = True
+    config.print_config = False
     config.err_binned_results = True
     config.use_cnet = True
 
-    config.use_cnet_energy = True     # use energy function to select OOD samples?
-    config.energy_thresh = 700        # correct samples with energy below this
-    config.reverse_thresh = True      # reverse the energy thresholding? (correct if above thresh)
+    # ENERGY ---
+    config.use_cnet_energy = False     # use energy function to select OOD samples?
+    config.energy_lower_thresh = True    # don't correct samples too high energy?
+    config.energy_thresh = 800    #450    # dont correct samples with energy above this
+    config.energy_scaled_corr = True  # scale the correction step size by energy?
+
+    config.reverse_thresh = False      # reverse the energy thresholding? (correct if above thresh)
+    # ---
 
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
     
-    config.split_corr_dim_trick = False
-    config.split_corr_dim = 0   # which dim to not correct with TTT tuned CNet
+    config.cnet_dont_corr_dims = [] #[0,1] #[0,2]  # which dims to not correct with CNet at all
+    # config.split_corr_dim_trick = False
+    config.split_corr_dims = []  # [0,2] # which dims to not correct with TTT tuned CNet
 
     config.corr_steps = 1   # How many correction iterations at inference?
-    config.corr_step_size = 1 # for err pred, what fraction of CNet corr to do
+    config.corr_step_size = 1 # base correction step size
 
     # Fancy Training Options
+    config.zero_orientation = True     # zero out the orientation of CNet inputs?
     config.cotrain = True if 'cotrain' in config.tasks else False
     config.pretrain_AMASS = False        # use pretrain networks on AMASS?
     config.AMASS_scale = 0.4            # scale AMASS data by this factor when getting kpts
@@ -88,7 +107,7 @@ def get_config():
     config.continue_train_RCNet = False
      
     # TTT
-    config.test_adapt = False
+    config.test_adapt = True
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
     config.TTT_from_file = True
     if config.TTT_loss == 'reproj_2d':
@@ -100,22 +119,39 @@ def get_config():
             config.test_adapt_lr = 2e-4 # 5e-4
             config.adapt_steps = 2 
         else:
+            # config.test_adapt_lr = 5e-4 # 5e-4
+            # config.adapt_steps = 3
             config.test_adapt_lr = 5e-4 # 5e-4
-            config.adapt_steps = 2
+            config.adapt_steps = 3
         config.TTT_errscale = 1e2
 
     # Data
-    config.trainsets = ['MPii', 'HP3D'] # 'MPii', 'HP3D', 
+    # config.trainsets = ['MPii', 'HP3D'] # 'MPii', 'HP3D', 
+    # config.trainsets = ['MPii', 'HP3D', 'RICH'] # 'MPii', 'HP3D', 
+    config.trainsets = ['RICH'] # 'MPii', 'HP3D', 
     config.trainsets.sort()
     config.trainsets_str = '_'.join(config.trainsets)
-    config.testset = 'PW3D' 
+    config.testset = 'PW3D'
+    # config.testset = 'RICH' 
+    # config.testset = 'AGORA' 
+    if 'export_agora' in config.tasks:
+        config.testset = 'AGORA'
 
-    config.test_eval_limit = 50_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
-    if config.testset == 'PW3D':
-        config.EVAL_JOINTS = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
+    config.test_eval_limit = 12_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
+    if config.testset in ['PW3D', 'RICH', 'AGORA']:
+        if config.testset == 'AGORA':
+            config.EVAL_JOINTS = [i for i in range(14)]
+        else:
+            config.EVAL_JOINTS = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
         config.EVAL_JOINTS.sort()
-        PW3D_testlen = 35_515
-        config.test_eval_subset = np.random.choice(PW3D_testlen, min(config.test_eval_limit, PW3D_testlen), replace=False)
+        testlens = {
+            'PW3D': 35_515,
+            'RICH': 21_248,
+            'AGORA': 5286,    # AGORA: manually set
+        }
+        config.test_eval_subset = np.random.choice(testlens[config.testset], 
+                                                   min(config.test_eval_limit, testlens[config.testset]), 
+                                                   replace=False)
     else:
         raise NotImplementedError
 
@@ -133,6 +169,7 @@ def get_config():
         'bal_mse': 1.0,
     }
     config.mmlab_backbones = ['spin', 'pare', 'cliff', 'bal_mse']
+    config.bedlam_backbones = ['cliff',]
 
     # Main base baths
     config.cnet_ckpt_path = '../../ckpts/' #hybrIK/w_{}/'.format(config.trainsets_str)
@@ -147,7 +184,7 @@ def get_config():
     config.backbone_trainset_lims = {
         'hybrik': {'MPii': None, 'HP3D': None}, # 50_000, None},
         'spin': {'MPii': None, 'HP3D': None}, # 50_000,},
-        'cliff': {'MPii': None,'HP3D': None}, # 50_000,},
+        'cliff': {'MPii': None,'HP3D': None, 'RICH': None,}, # 50_000,},
         'pare': {'MPii': None, 'HP3D': None}, # 50_000,},
         'bal_mse': {'MPii': None,'HP3D': None}, # 50_000,},
     }
@@ -193,8 +230,23 @@ def get_config():
         path = None
         if test_backbone == 'hybrik':
             path = '{}{}/{}_cnet_hybrik_test.npy'.format(config.cnet_dataset_path, 
-                                                                        config.testset,
-                                                                        config.hybrIK_version,)
+                                                         config.testset,
+                                                         config.hybrIK_version,)
+        elif test_backbone == 'cliff':
+            if config.testset == 'PW3D':
+                path = '{}{}/mmlab_{}_test.npy'.format(config.cnet_dataset_path, 
+                                                config.testset,
+                                                test_backbone,)
+            elif config.testset == 'RICH':
+                path = '{}{}/bedlam_{}_test.npy'.format(config.cnet_dataset_path, 
+                                                config.testset,
+                                                test_backbone,)
+            elif config.testset == 'AGORA':
+                path = '{}{}/bedlam_{}_test.npy'.format(config.cnet_dataset_path, 
+                                                config.testset,
+                                                test_backbone,)
+            else:
+                raise NotImplementedError
         elif test_backbone in config.mmlab_backbones:
             path = '{}{}/mmlab_{}_test.npy'.format(config.cnet_dataset_path, 
                                                 config.testset,
@@ -211,8 +263,15 @@ def get_config():
     # Network inputs
     config.use_multi_distal = False  # Indiv. nets for each limb + distal pred
     config.limbs = ['LA', 'RA', 'LL', 'RL'] # 'LL', 'RL', 'LA', 'RA'    limbs for multi_distal net
-    config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
-    config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
+    
+    if config.testset == 'AGORA':
+        config.proximal_kpts = [0, 3, 8, 11]    # adjusted due to AGORA data being in 14-joint format already
+        config.distal_kpts = [2, 5, 10, 13]
+        RCNET_TARGET_NAMES = RCNET_TARGET_NAMES_AGORA
+    else:
+        config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
+        config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
+        RCNET_TARGET_NAMES = RCNET_TARGET_NAMES_OTHER
     config.cnet_targets = config.distal_kpts
     config.rcnet_targets_name = ['Hips', 'Shoulders']
     # get all the entries in the dict, make a combined list

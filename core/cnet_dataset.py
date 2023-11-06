@@ -6,22 +6,47 @@ class cnet_pose_dataset(Dataset):
     '''
     
     '''
-    def __init__(self, data, transform=None):
+    def __init__(self, data, datasets, backbones, config, train=False, transforms=None, use_feats=False):
         '''
         args:
             data: numpy array of shape ()
         '''
-        self.transform = transform
+        
+        self.transforms = transforms
         self.data = data
+        self.train = train
+        self.datasets = datasets
+        self.backbones = backbones
+        self.data_path = config.cnet_dataset_path
+        self.config = config
 
     def __len__(self):
         return len(self.data)
     
     def __getitem__(self, idx):
         sample = self.data[idx]
-        if self.transform:
-            if np.random.rand() < self.transform.p:
-                sample = self.transform(sample)
+        if self.transforms:
+            for transform in self.transforms:
+                if np.random.rand() < transform.p:
+                    sample = transform(sample)
+
+        # use id of sample to load feature maps if required
+        if self.config.use_features:
+            if sample.shape[0] < 4:
+                f = 5
+            id = int(sample[2].flatten()[0].item())
+            # load feature maps from file
+            dataset_idx = int(sample[3].flatten()[0].item())
+            dataset = self.datasets[dataset_idx]
+            backbone_idx = int(sample[4].flatten()[0].item())
+            backbone = self.backbones[backbone_idx] if self.train else self.backbones[backbone_idx]
+            framework = 'mmlab' if backbone in self.config.mmlab_backbones else 'bedlam'
+
+            # feat_path = self.data_path.split('mmlab')[0] + f'feature_maps/{self.data_path.split(".")[0].split("/")[-1]}/{id}.npy'
+            feat_path = f'{self.data_path}{dataset}/feature_maps/{framework}_{backbone}_{"train" if self.train else "test"}/{id}.npy'
+            feats = np.load(feat_path)
+            sample = {'data': sample,
+                      'feats': feats}        
         return sample
 
 class hflip_keypoints():
@@ -71,9 +96,6 @@ class hflip_keypoints():
 
         return keypoints_flipped
 
-    def foo(self,a,b):
-        return a+b
-
     def __call__(self, sample):
         '''  '''
         backbone_preds = sample[0]
@@ -82,6 +104,36 @@ class hflip_keypoints():
         flipped_backbone_preds = self.flip(backbone_preds, self.flip_pairs)
         flipped_target_xyz_17s = self.flip(target_xyz_17s, self.flip_pairs)
 
-        return torch.cat([flipped_backbone_preds, 
+        if sample.shape[0] == 2:
+            return torch.cat([flipped_backbone_preds, 
+                              flipped_target_xyz_17s]).reshape(2,-1,3)
+        elif sample.shape[0] == 5:
+            # features case
+            return torch.cat([flipped_backbone_preds.reshape(1,-1,3), 
+                          flipped_target_xyz_17s.reshape(1,-1,3), 
+                          sample[2:]])
+        else:
+            return torch.cat([flipped_backbone_preds, 
                           flipped_target_xyz_17s, 
                           sample[2]]).reshape(3,-1,3)
+    
+class rescale_keypoints():
+    '''
+    Rescale pose keypoints
+    '''
+    def __init__(self, p=1.0, range=[0.9, 1.1]):
+        '''  '''
+        self.range = range
+        self.p = p
+    
+    def rescale(self, keypoints, range):
+        '''  '''
+        keypoints_rescaled = keypoints.detach().clone()
+        keypoints_rescaled *= np.random.uniform(range[0], range[1])
+        return keypoints_rescaled
+
+    def __call__(self, sample):
+        ''' '''
+        sample[0] = self.rescale(sample[0], self.range) # backbone preds
+        sample[1] = self.rescale(sample[1], self.range) # targets
+        return sample
