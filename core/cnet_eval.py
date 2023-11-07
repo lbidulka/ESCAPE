@@ -270,18 +270,16 @@ def eval_gt(cnet, R_cnet, config,
     corr_idxs = np.concatenate(corr_idxs, axis=0)
 
     # Save Energy scores and gt MSEs for plotting
-    if config.use_cnet_energy:
-        bb_e_scores = torch.logsumexp(torch.tensor(backbone_preds_eval.reshape(backbone_preds_eval.shape[0], -1)), dim=-1)
-        gt_mses = np.square((backbone_preds_eval - gts_eval)).mean((1,2)).reshape(-1,1)
-        energies_losses = np.concatenate([bb_e_scores.reshape(-1,1), gt_mses], axis=1)
+    bb_e_scores = torch.logsumexp(torch.tensor(backbone_preds_eval.reshape(backbone_preds_eval.shape[0], -1)), dim=-1)
+    gt_mses = np.square((backbone_preds_eval - gts_eval)).mean((1,2)).reshape(-1,1)
+    energies_losses = np.concatenate([bb_e_scores.reshape(-1,1), gt_mses], axis=1)
 
-        energies_outpath = '../../outputs/energies/'
-        dataset_name = testset_path.split('/')[-2]
-        if dataset_name != 'PW3D':
-            energies_outpath += dataset_name + '_'
-        backbone_name = testset_path.split('/')[-1].split('.')[-2]
-        energies_outpath +=  '_'.join([backbone_name, 'energies.npy'])
-        np.save(energies_outpath, energies_losses)
+    energies_outpath = '../../outputs/energies/'
+    dataset_name = testset_path.split('/')[-2]
+    energies_outpath += dataset_name + '_'
+    backbone_name = testset_path.split('/')[-1].split('.')[-2]
+    energies_outpath +=  '_'.join([backbone_name, 'energies.npy'])
+    np.save(energies_outpath, energies_losses)
     
     # get metrics
     num_tails = [

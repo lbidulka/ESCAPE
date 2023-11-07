@@ -60,7 +60,7 @@ def get_config():
 
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet']#, 'test',]# 'plot_TTT_loss', 'plot_TTT_train_corr']
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss',] # 'plot_TTT_train_corr']
-    config.tasks = ['test', 'plot_TTT_loss',]
+    config.tasks = ['test', 'plot_E_sep',] # plot_TTT_loss, plot_E_sep
 
     # config.tasks = ['optuna_CNet', 'optuna_TTT']
 
@@ -71,13 +71,14 @@ def get_config():
     # config.tasks = ['test', 'plot_TTT_loss']
     # config.tasks = ['export_agora']
     # config.tasks = ['plot_TTT_loss']
-    config.tasks = ['get_inference_time']
+    config.tasks = ['plot_E_sep'] # plot_E_sep, get_inference_time
+    config.tasks = ['test', 'test_trainsets', 'plot_E_sep']
 
     # Main Settings
     config.optuna_num_trials = 1
     config.print_config = False
     config.err_binned_results = True
-    config.include_target_kpt_errs = True
+    config.include_target_kpt_errs = False  # report individual target kpt erors?
     config.use_cnet = True
     config.use_features = False  # use feature maps as input to CNet?
 
@@ -114,7 +115,7 @@ def get_config():
     config.continue_train_RCNet = False
      
     # TTT
-    config.test_adapt = True
+    config.test_adapt = False
     config.TTT_e_thresh = True      # only apply TTT to samples with samples below energy thresh?
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
     config.TTT_from_file = True
@@ -141,7 +142,6 @@ def get_config():
 
     # DATA
     # config.train_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse'] # 'spin', 'hybrik', 'cliff', 'pare', 'bal_mse'
-    # config.train_backbones = ['cliff',]
     config.train_backbones = ['hybrik',]
     # config.train_backbones = ['bedlam-cliff', 'cliff']
 
@@ -149,7 +149,6 @@ def get_config():
     # config.trainsets = ['MPii', 'HP3D', 'RICH'] # 'MPii', 'HP3D', 
     # config.trainsets = ['AGORA', 'MPii', 'HP3D',]
     # config.trainsets = ['AGORA', 'BEDLAM',]# 'MPii', 'HP3D',] 
-    # config.trainsets.sort()
     config.trainsets_str = '_'.join(config.trainsets)
 
     # config.val_sets = {'MPii': 'cliff', 
@@ -157,7 +156,6 @@ def get_config():
     config.val_sets = []
     
     # config.test_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse']
-    # config.test_backbones = ['cliff',]
     config.test_backbones = ['hybrik',]
     # config.test_backbones = ['bedlam-cliff',]
 
@@ -256,6 +254,7 @@ def get_config():
         config.hybrik_cfg = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_wo_pw3d.yaml'
         config.ckpt = 'hybrik_hrnet48_wo3dpw.pth' 
 
+    config.trainset_info = {}
     config.cnet_trainset_paths = []
     config.cnet_trainset_scales = []
     config.train_datalims = []

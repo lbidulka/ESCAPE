@@ -118,6 +118,8 @@ def main_worker(config):
 
         elif task == 'test':
             test(cnet, R_cnet, config)
+        elif task == 'test_trainsets':
+            test_trainsets(cnet, R_cnet, config,)
         elif task == 'plot_TTT_loss':
             plot_TTT_loss(config)
         elif task == 'plot_TTT_train_corr':
@@ -174,6 +176,12 @@ def main_worker(config):
         elif task == 'get_inference_time':
             from utils.inference_timing import get_inference_time
             get_inference_time(config, cnet, R_cnet)
+        elif task == 'plot_E_sep':
+            from utils.output_reporting import plot_E_sep
+            for testset in config.testsets:
+                plot_E_sep(config, task='test', dataset=testset)
+            for trainset in config.trainsets:
+                plot_E_sep(config, task='train', dataset=trainset)
         else:
             raise NotImplementedError
     
