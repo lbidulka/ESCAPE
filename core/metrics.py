@@ -75,3 +75,49 @@ def get_P1_P2(backbone_preds, corr_preds, gts,
     bb = [bb_pa_mpjpe_all, bb_pa_mpjpe_tails, bb_mpjpe_all, bb_mpjpe_tails, backbone_err]
     return corr, bb, attempted
 
+def get_top_corr(backbone_preds, corr_preds, gts, img_idxs, kpts, n=10):
+    ''' 
+    Get img_ids, gt poses, and corrected poses of the n best 
+    correction improvements on specified kpts over backbone predictions
+    '''
+
+    # look at top corrections for each individual target kpt:
+    backbone_kpts_mpjpe = np.sqrt(((backbone_preds[:,kpts] - gts[:,kpts])**2).sum(2))
+    corr_kpts_mpjpe = np.sqrt(((corr_preds[:,kpts] - gts[:,kpts])**2).sum(2))
+    diffs = corr_kpts_mpjpe - backbone_kpts_mpjpe
+
+    # get top n prediction with largest single keypoint correction (smallest value)
+    num = n #*100
+    # top_lh_idxs = np.argsort(-diffs[:,0])[-num:]
+    # top_rh_idxs = np.argsort(-diffs[:,1])[-num:]
+    # top_lf_idxs = np.argsort(-diffs[:,2])[-num:]
+    # top_rf_idxs = np.argsort(-diffs[:,3])[-num:]
+
+    # top_idxs = np.argsort(-np.vstack([diffs[:,0], diffs[:,1], diffs[:,2], diffs[:,3]]).max(axis=0))[-num:]
+    # top_idxs = top_lh_idxs
+
+    # get MPJPE of backbone and corrected predictions
+    backbone_mpjpe = backbone_kpts_mpjpe.mean(1)
+    corr_mpjpe = corr_kpts_mpjpe.mean(1)
+
+    # get top n corrected predictions
+    top_idxs = np.argpartition(corr_mpjpe - backbone_mpjpe, n)[:n*100]
+
+    # top_idxs = np.argpartition(corr_mpjpe, n)[:n*100]
+
+    # get img_ids, gt poses, and corrected poses of the top n corrected predictions
+    img_ids = img_idxs[top_idxs]
+    # img_ids will have many similar values due to the data, we want to keep representative 
+    # ids, so we enforce a minimum distance between ids
+    img_ids = np.unique(np.round(img_ids, -2), return_index=True)[1][:n]
+
+    # replace top_idxs with top_idxs corresponding to the selected img_ids
+    top_idxs = top_idxs[img_ids]
+    
+
+    img_ids = img_idxs[top_idxs]
+    gt = gts[top_idxs]
+    preds = backbone_preds[top_idxs]
+    corr = corr_preds[top_idxs]
+    return img_ids, gt, preds, corr
+

@@ -34,22 +34,37 @@ def unpack_train_data(data, dataset, target_key, config):
     
     return inps, labels, img_ids, img_paths, bboxes
 
-def convert_kpts_to_h36m_17s(target_xyzs, dataset):
+def convert_kpts_to_h36m_17s(target_xyzs, dataset, task='train'):
     '''
     Convert joint labels to H36M 17 joints
     '''
     if dataset == 'PW3D':
         return target_xyzs
     elif dataset == 'HP3D':
-        EVAL_JOINTS_17 = [
-            4,  
-            18, 19, 20, 
-            23, 24, 25,
-            3, 5, # 'spine' == spine_extra, 'neck' == throat (not quite 'neck_extra' as desired)
-            6, 7, # 
-            9, 10, 11,
-            14, 15, 16,
-        ]
+        if task == 'train':
+            EVAL_JOINTS_17 = [
+                4,  
+                18, 19, 20, 
+                23, 24, 25,
+                3, 5, # 'spine' == spine_extra, 'neck' == throat (not quite 'neck_extra' as desired)
+                6, 7, # 
+                9, 10, 11,
+                14, 15, 16,
+            ]
+        else:
+            EVAL_JOINTS_17 = [
+                14, 
+                11, 12, 13,
+                8, 9, 10,
+                15, 1, 
+                16, 0,
+                5, 6, 7,
+                2, 3, 4,
+            ]
+            target_xyzs = np.vstack(target_xyzs)
+            # target_xyzs = [t.reshape(-1, 3)[EVAL_JOINTS_17].reshape(1,-1) for t in target_xyzs]
+            target_xyzs = target_xyzs.reshape(target_xyzs.shape[0], -1 ,3)[:,EVAL_JOINTS_17]
+            return target_xyzs.reshape(1, target_xyzs.shape[0], -1)
     if dataset == 'MPii':
         EVAL_JOINTS_17 = [
             0,
@@ -67,8 +82,8 @@ def convert_kpts_to_h36m_17s(target_xyzs, dataset):
 
 def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
     # Data/Setup
-    gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=128, shuffle=False, 
-                                            num_workers=8, drop_last=False, pin_memory=True)
+    gt_loader = torch.utils.data.DataLoader(gt_dataset, batch_size=64, shuffle=False, 
+                                            num_workers=2, drop_last=False, pin_memory=True)
     m.eval()
     m = m.to(config.device)
 
@@ -101,8 +116,9 @@ def create_cnet_dataset_w_HybrIK(m, config, gt_dataset, dataset, task='train'):
     backbone_preds = [b.detach().cpu().numpy() for b in backbone_preds]
     backbone_preds = np.concatenate(backbone_preds, axis=0)
     target_xyzs = [t.detach().cpu().numpy() for t in target_xyzs]
-    target_xyz_17s = convert_kpts_to_h36m_17s(target_xyzs, dataset)
+    target_xyz_17s = convert_kpts_to_h36m_17s(target_xyzs, dataset, task=task)
     target_xyz_17s = np.concatenate(target_xyz_17s, axis=0)
+
     img_idss = np.concatenate([i.detach().cpu().numpy() for i in img_idss], axis=0).reshape(-1,1)
 
     # img_names = []

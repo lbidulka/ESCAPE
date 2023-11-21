@@ -182,6 +182,12 @@ def main_worker(config):
                 plot_E_sep(config, task='test', dataset=testset)
             for trainset in config.trainsets:
                 plot_E_sep(config, task='train', dataset=trainset)
+        elif task == 'plot_E_sep_cnet':
+            from utils.output_reporting import plot_E_sep
+            for testset in config.testsets:
+                plot_E_sep(config, task='test', dataset=testset, cnet=True)
+            for trainset in config.trainsets:
+                plot_E_sep(config, task='train', dataset=trainset, cnet=True)
         else:
             raise NotImplementedError
     

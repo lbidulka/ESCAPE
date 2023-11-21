@@ -68,17 +68,19 @@ def get_config():
 
     # config.tasks = ['train_CNet', 'export_agora']
 
-    # config.tasks = ['test', 'plot_TTT_loss']
+    config.tasks = ['test', 'plot_TTT_loss']
     # config.tasks = ['export_agora']
     # config.tasks = ['plot_TTT_loss']
-    config.tasks = ['plot_E_sep'] # plot_E_sep, get_inference_time
-    config.tasks = ['test', 'test_trainsets', 'plot_E_sep']
-
+    config.tasks = ['plot_E_sep'] # plot_E_sep, plot_E_sep_cnet, get_inference_time 
+    # config.tasks = ['test', 'test_trainsets', 'plot_E_sep']
+    config.tasks = ['test']
+    # config.tasks = ['make_testset']
+ 
     # Main Settings
     config.optuna_num_trials = 1
     config.print_config = False
     config.err_binned_results = True
-    config.include_target_kpt_errs = False  # report individual target kpt erors?
+    config.include_target_kpt_errs = True  # report individual target kpt erors?
     config.use_cnet = True
     config.use_features = False  # use feature maps as input to CNet?
 
@@ -86,11 +88,14 @@ def get_config():
     config.use_cnet_energy = False     # use energy function to select OOD samples?
     config.energy_lower_thresh = True    # don't correct samples too high energy?
     config.energy_thresh = 800    #450    # dont correct samples with energy above this
+    config.E_thresh_cnet = 25    #450    # cnet pred E threshold
     config.energy_scaled_corr = False  # scale the correction step size by energy?
 
     config.reverse_thresh = False      # reverse the energy thresholding? (correct if above thresh)
     # ---
 
+    # CNET ---
+    config.cnet_align_root = True # make CNet align root to pelvis of inputs?
     config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
     
     config.cnet_dont_corr_dims = [] #[0,1] #[0,2]  # which dims to not correct with CNet at all
@@ -120,8 +125,8 @@ def get_config():
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
     config.TTT_from_file = True
     if config.TTT_loss == 'reproj_2d':
-        config.test_adapt_lr = 1e-3
-        config.adapt_steps = 5
+        config.test_adapt_lr = 5e-4
+        config.adapt_steps = 5 #2
         config.TTT_errscale = 1e2
     if config.TTT_loss == 'consistency':
         if config.pretrain_AMASS:
@@ -142,7 +147,7 @@ def get_config():
 
     # DATA
     # config.train_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse'] # 'spin', 'hybrik', 'cliff', 'pare', 'bal_mse'
-    config.train_backbones = ['hybrik',]
+    config.train_backbones = ['pare',]
     # config.train_backbones = ['bedlam-cliff', 'cliff']
 
     config.trainsets = ['MPii', 'HP3D',] # 'MPii', 'HP3D', 
@@ -156,7 +161,7 @@ def get_config():
     config.val_sets = []
     
     # config.test_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse']
-    config.test_backbones = ['hybrik',]
+    config.test_backbones = ['pare',]
     # config.test_backbones = ['bedlam-cliff',]
 
     # config.testset = 'PW3D'
@@ -165,7 +170,8 @@ def get_config():
     # config.testset = 'HP3D'
 
     config.testsets = ['PW3D', 'HP3D', ]
-    config.testsets = ['PW3D',]
+    # config.testsets = ['PW3D',]
+    # config.testsets = ['HP3D',]
     # config.testsets = ['PW3D', 'RICH']
 
     if 'export_agora' in config.tasks:

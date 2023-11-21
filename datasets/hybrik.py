@@ -34,6 +34,7 @@ def load_hybrik(config):
 
 def get_datasets(backbone_cfg, config):
     trainsets = []
+    testsets = []
     if any([(task in config.tasks) for task in 
             ['make_trainsets', 'make_trainsets']]):
         for dataset in config.trainsets:
@@ -57,22 +58,27 @@ def get_datasets(backbone_cfg, config):
             else:
                 raise NotImplementedError
             trainsets.append(trainset)
-    else:
-        return trainsets, None
-    if 'test' in config.tasks:
-        if config.testset == 'PW3D':
-            testset = PW3D(
-                cfg=backbone_cfg,
-                ann_file='3DPW_test_new_fresh.json',
-                train=False,
-                root='/media/ExtHDD/Mohsen_data/3DPW')
-        elif dataset == 'HP3D':
-            raise NotImplementedError
-        else:
-            raise NotImplementedError
+    elif 'make_testset' in config.tasks:
+        for dataset in config.testsets:
+            if dataset == 'PW3D':
+                testset = PW3D(
+                    cfg=backbone_cfg,
+                    ann_file='3DPW_test_new_fresh.json',
+                    train=False,
+                    root='/media/ExtHDD/Mohsen_data/3DPW')
+            elif dataset == 'HP3D':
+                testset = HP3D(
+                    cfg=backbone_cfg,
+                    ann_file='test',
+                    train=False,
+                    root='/data/lbidulka/pose_datasets' + '/mpi_inf_3dhp',
+                )
+            else:
+                raise NotImplementedError
+            testsets.append(testset)
     else: 
-        testset = None
-    return trainsets, testset
+        testsets = [None]
+    return trainsets, testsets
 
 def make_hybrik_pred_dataset(config, task):
     '''
@@ -85,14 +91,14 @@ def make_hybrik_pred_dataset(config, task):
         task: str, 'train' or 'test'
     '''
     hybrik, backbone_cfg = load_hybrik(config)
-    trainsets, testset = get_datasets(backbone_cfg, config)
+    trainsets, testsets = get_datasets(backbone_cfg, config)
 
     if task == 'train':
         dataset_names = config.trainsets
         datasets = trainsets
     elif task == 'test':
-        dataset_names = [config.testset]
-        datasets = [testset]
+        dataset_names = config.testsets
+        datasets = testsets
     with torch.no_grad():
         for i, dataset in enumerate(datasets):
             print(f'##### Creating Cnet {dataset} HybrIK {task}set #####')

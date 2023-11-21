@@ -154,8 +154,10 @@ class adapt_net():
     
     def __call__(self, cnet_in, ret_corr_idxs=False, ret_E=False):
         out_pred = cnet_in.clone().detach()
-        E_in = self._energy(cnet_in)
+
+        E_in = None
         if self.config.use_cnet_energy and self.R == False:
+            E_in = self._energy(cnet_in - cnet_in[:,:1])
             if self.config.energy_lower_thresh:
                 # dont correct samples with energy above threshold
                 dont_corr_idxs = E_in > self.config.energy_thresh
@@ -197,19 +199,25 @@ class adapt_net():
         step_sizes = step_sizes[corr_idxs]
         cnet_in = cnet_in[corr_idxs]
 
-        # rotate poses to zero orientation
+        # rotate poses to zero orientation 
         if self.config.zero_orientation:
             cnet_in, rot, i_rot = self._zero_orientation(cnet_in)
+        # zero to hip
+        if self.config.cnet_align_root:
+            hips = cnet_in[:, 0].clone().unsqueeze(1)
+            cnet_in -= hips
 
         # correct as required
         for i in range(self.config.corr_steps):
             corr_pred = self._corr(cnet_in, step_sizes=step_sizes)
             cnet_in = corr_pred
         
-        # restore corr poses to original orientation
+        # restore corr poses to original orientation, add hips back
         if self.config.zero_orientation:
             corr_pred = torch.bmm(i_rot.transpose(1,2), 
                                     corr_pred.reshape(-1, corr_pred.shape[1], 3).transpose(1,2)).transpose(1,2)
+        if self.config.cnet_align_root:
+            corr_pred += hips
 
         # place samples back in original tensor at original indices
         out_pred[corr_idxs] = corr_pred
@@ -241,7 +249,7 @@ class adapt_net():
             if self.pred_errs:
                 diff = pred_errs[..., dim]
             else:
-                in_pose[:, self.target_kpts, dim] - pred_errs[..., dim]
+                in_pose[:, self.target_kpts, dim] -= pred_errs[..., dim]
             corr_pred[:, self.target_kpts, dim] -= dim_step_size*diff
         return corr_pred
 

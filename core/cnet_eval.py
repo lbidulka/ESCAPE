@@ -20,7 +20,7 @@ def cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d,):
     '''
     CNet loss for TTT, based on config
 
-    consistency: computes L2(proximal kpts predicted by Rcnet from cnet preds, orignal backbone preds)
+    consistency: computes MSE(proximal kpts predicted by Rcnet from cnet preds, orignal backbone preds)
     '''
 
     if config.TTT_loss == 'reproj_2d':
@@ -136,6 +136,7 @@ def eval_gt(cnet, R_cnet, config,
     backbone_preds = []
     corr_preds = []
     corr_idxs = []
+    img_idxs = []
     gts = []
     losses = []
     for it, data in enumerate(tqdm(gt_eval_loader, dynamic_ncols=True)):
@@ -147,7 +148,8 @@ def eval_gt(cnet, R_cnet, config,
             # Only do TTT if sample is hard sample
             if config.test_adapt and config.TTT_e_thresh:
                 # dont correct samples with energy above threshold
-                E = cnet._energy(backbone_pred.detach().clone())
+                # E = cnet._energy(backbone_pred.detach().clone())
+                E = cnet._energy(backbone_pred - backbone_pred[:,:1])
                 dont_TTT_idxs = E > config.energy_thresh
                 TTT_idxs = ~dont_TTT_idxs
                 TTT_e_thresh_condition = TTT_idxs.sum() > 0
@@ -180,7 +182,13 @@ def eval_gt(cnet, R_cnet, config,
                         gt_3d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)
                         # gt_mse = torch.square((backbone_pred[:,config.distal_kpts,:] - gt_3d[:,config.distal_kpts])*config.TTT_errscale).mean()
                         gt_mse = torch.square((corrected_pred - gt_3d)*config.TTT_errscale).mean()
-                        losses.append([loss.item(), gt_mse.item()])
+
+                        # log true mse between cnet predicted correction, and GT correction
+                        cnet_pred_err = (backbone_pred - corrected_pred)[:,cnet.target_kpts]
+                        cnet_gt_err = (backbone_pred - gt_3d)[:,cnet.target_kpts] #* config.TTT_errscale
+                        cnet_mse = torch.square((cnet_pred_err - cnet_gt_err)*cnet.config.err_scale).mean()
+
+                        losses.append([loss.item(), gt_mse.item(), cnet_mse.item()])
 
             with torch.no_grad():
                 # get corrected pred, with adjusted cnet
@@ -216,6 +224,7 @@ def eval_gt(cnet, R_cnet, config,
         backbone_preds.append(backbone_pred.detach().cpu().numpy())
         corr_preds.append(corrected_pred.reshape(labels['target_xyz_17'].shape[0], -1, 3).detach().cpu().numpy())
         gts.append(labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3).detach().cpu().numpy())
+        img_idxs.append(img_ids.detach().cpu().numpy())
         for i in range(output.pred_xyz_jts_17.shape[0]):
             pred_xyz_jts_17 = output.pred_xyz_jts_17[i].data.cpu().numpy()
             kpt_pred[int(img_ids[i])] = {
@@ -258,6 +267,7 @@ def eval_gt(cnet, R_cnet, config,
     backbone_preds = np.concatenate(backbone_preds, axis=0)
     corr_preds = np.concatenate(corr_preds, axis=0)
     gts = np.concatenate(gts, axis=0)
+    img_idxs = np.concatenate(img_idxs, axis=0)
     # only keep eval joints
     backbone_preds_eval = backbone_preds[:, config.EVAL_JOINTS]
     corr_preds_eval = corr_preds[:, config.EVAL_JOINTS]
@@ -269,10 +279,11 @@ def eval_gt(cnet, R_cnet, config,
 
     corr_idxs = np.concatenate(corr_idxs, axis=0)
 
-    # Save Energy scores and gt MSEs for plotting
+    # Save BB Energy scores, gt MSEs, and gt MPJPEs for plotting
     bb_e_scores = torch.logsumexp(torch.tensor(backbone_preds_eval.reshape(backbone_preds_eval.shape[0], -1)), dim=-1)
     gt_mses = np.square((backbone_preds_eval - gts_eval)).mean((1,2)).reshape(-1,1)
-    energies_losses = np.concatenate([bb_e_scores.reshape(-1,1), gt_mses], axis=1)
+    gt_mpjpe = np.sqrt(((backbone_preds_eval - gts_eval)**2).sum(2)).mean(1).reshape(-1,1)
+    energies_losses = np.concatenate([bb_e_scores.reshape(-1,1), gt_mses, gt_mpjpe], axis=1)
 
     energies_outpath = '../../outputs/energies/'
     dataset_name = testset_path.split('/')[-2]
@@ -280,7 +291,45 @@ def eval_gt(cnet, R_cnet, config,
     backbone_name = testset_path.split('/')[-1].split('.')[-2]
     energies_outpath +=  '_'.join([backbone_name, 'energies.npy'])
     np.save(energies_outpath, energies_losses)
+
+    # Save CNet Energy scores and gt MSEs for plotting
+    cnet_preds = (corr_preds[:, config.cnet_targets] - backbone_preds[:, config.cnet_targets]) * 1000
+    cnet_labels = (backbone_preds[:, config.cnet_targets] - gts[:, config.cnet_targets]) * 1000
+
+    cnet_e_scores = torch.logsumexp(torch.tensor(cnet_preds.reshape(cnet_preds.shape[0], -1)), dim=-1)
+    cnet_mses = np.square((cnet_labels - cnet_preds)).mean((1,2)).reshape(-1,1)
+    cnet_mpjpe = np.sqrt(((cnet_labels - cnet_preds)**2).sum(2)).mean(1).reshape(-1,1)
+    energies_losses = np.concatenate([cnet_e_scores.reshape(-1,1), cnet_mses, cnet_mpjpe], axis=1)
+
+    energies_outpath = '../../outputs/energies/'
+    dataset_name = testset_path.split('/')[-2]
+    energies_outpath += dataset_name + '_'
+    backbone_name = testset_path.split('/')[-1].split('.')[-2]
+    energies_outpath +=  '_'.join([backbone_name, 'energies_cnet.npy'])
+    np.save(energies_outpath, energies_losses)
     
+    # get top corrections for qualitative investigation
+    top_img_ids, top_gts, top_preds, top_corrs = metrics.get_top_corr(backbone_preds, corr_preds, gts, 
+                                                           img_idxs, config.cnet_targets, n=50)
+    
+    if dataset_name == 'PW3D':
+        # add specific img id to the top corrections
+        # want to add sample with img id = 22408
+        idx_22408 = np.where(img_idxs == 22408)[0][0]
+        top_img_ids = np.concatenate([np.array([22408])[None,:], top_img_ids])
+        top_gts = np.concatenate([gts[idx_22408:idx_22408+1], top_gts])
+        top_preds = np.concatenate([backbone_preds[idx_22408:idx_22408+1], top_preds])
+        top_corrs = np.concatenate([corr_preds[idx_22408:idx_22408+1], top_corrs])
+
+    # save top corrections
+    top_corr_outpath = '../../outputs/qualitative/'
+    top_corr_outpath += dataset_name + '_'
+    top_corr_outpath +=  '_'.join([backbone_name, 'top_corr.npy'])
+    top_qual_info = np.array([np.ones_like(top_gts)*top_img_ids.reshape(-1,1,1), 
+                              top_gts, top_preds, top_corrs])
+    np.save(top_corr_outpath, top_qual_info)
+
+
     # get metrics
     num_tails = [
         int(0.05*gts_eval.shape[0]),

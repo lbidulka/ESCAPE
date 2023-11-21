@@ -35,10 +35,12 @@ def print_test_summary(config, all_summary):
                             print('{}: {:7.2f},'.format(key, diff), end=' ')
             print('\n')
 
-def plot_E_sep(config, task, dataset):
+def plot_E_sep(config, task, dataset, cnet=False):
     ''' 
     loads up E scores + GT MSE and plots histogram of errs with & w/o E thresholding
     '''
+    file_suffix = 'energies_cnet.npy' if cnet else 'energies.npy'
+
     if task == 'test':
         datasets = config.testsets
         loss_paths = []
@@ -62,49 +64,73 @@ def plot_E_sep(config, task, dataset):
         dataset_name = out_path.split('/')[-2]
         loss_path = energies_outpath
         loss_path += dataset_name + '_'
-        loss_path += '_'.join([backbone_name, 'energies.npy'])
+        loss_path += '_'.join([backbone_name, file_suffix])
         bb_losses = np.load(loss_path)
         energies_losses.append(bb_losses)
     energies_losses = np.concatenate(energies_losses)
 
-    save_dir = '../../outputs/energies/plots/' + f'{dataset}_{backbone_name}_{task}_'
-    save_dir += 'E_histogram.png'
-    title = f'{dataset} # {config.test_backbones[0]} Poses vs. GT 3D MSE'
-    print(f"Plotting Energies + Losses to {save_dir}")
-
-    energies_losses_bound = energies_losses[energies_losses[:,1] < 30_000] # remove some outliers for plotting
-    MSE_errs = energies_losses_bound[:,1]
-    Es = energies_losses_bound[:,0]
-    E_t_MSE_errs = MSE_errs[Es < config.energy_thresh]
+    save_dir = '../../outputs/energies/plots/' + f'{dataset}/{dataset}_{backbone_name}_{task}_'
+    if cnet:
+        save_dir += 'E_histogram_cnet.png'
+        title = f'{dataset} # {config.test_backbones[0]} Cnet Preds vs. GT Target MSE'
+    else:
+        save_dir += 'E_histogram.png'
+        title = f'{dataset} # {config.test_backbones[0]} Poses vs. GT 3D MSE'
 
     # Get thresh for top 10% of MSE err samples
     num_tail = int(0.10*energies_losses[:,1].shape[0])
     tail_idxs = np.argpartition(energies_losses[:,1], -num_tail)[-num_tail:]
     check_thresh = int(energies_losses[tail_idxs,1].min())   # 7000
 
-    E_thresh = config.energy_thresh # config.energy_thresh, 800
-    print("\n|| {}: {} ||".format(dataset, backbone_name))
+    E_thresh = config.E_thresh_cnet if cnet else config.energy_thresh # config.energy_thresh, 800
+    # E_thresh = 600
+    
     MSE_errs_full = energies_losses[:,1]
+    MJPEs_full = energies_losses[:,2]
     Es_full = energies_losses[:,0]
-    E_t_MSE_errs_full = MSE_errs_full[Es_full < E_thresh]
-
+    E_t_MSE_errs_full = MSE_errs_full[Es_full < E_thresh]  # normal
+    E_t_MPJPEs_full = MJPEs_full[Es_full < E_thresh] 
+    # E_t_MSE_errs_full = MSE_errs_full[Es_full > E_thresh]
     num_top10 = np.sum(MSE_errs_full > check_thresh)
     num_Et_top10 = np.sum(E_t_MSE_errs_full > check_thresh)
 
     frac_full = round(E_t_MSE_errs_full.shape[0] / MSE_errs_full.shape[0], 2)
     frac_top10p = round(num_Et_top10 / num_top10, 2)
-    print('frac full: {}, frac top10p: {}'.format(frac_full, frac_top10p))
 
+    # avg error of all samples before and after E_thresh
+    avg_MSE_full = np.mean(MSE_errs_full) / 1000
+    avg_MSE_Et = np.mean(E_t_MSE_errs_full) / 1000
+    avg_MPJPE_full = np.mean(MJPEs_full)
+    avg_MPJPE_Et = np.mean(E_t_MPJPEs_full)
+
+    print("\n|| {}: {} ||".format(dataset, backbone_name))    
+    print('frac full: {}, frac top10p: {}'.format(frac_full, frac_top10p))
+    print('MPJPE full: {:.1f}, MPJPE Et: {:.1f}'.format(avg_MPJPE_full, avg_MPJPE_Et))
+    
+    # Plotting
+    print(f"Plotting Energies + Losses to {save_dir}")
+    xlim = 50_000 if cnet else 30_000
+    energies_losses_bound = energies_losses[energies_losses[:,1] < xlim] # remove some outliers for plotting
+    MSE_errs = energies_losses_bound[:,1]
+    Es = energies_losses_bound[:,0]
+    E_t_MSE_errs = MSE_errs[Es < E_thresh]    # normal
+    # E_t_MSE_errs = MSE_errs[Es > E_thresh]
     num_bins = 50
     ylims = {
-        'train': {'MPii': [0, 5_000], 'HP3D': [0, 25_000]},
-        'test': {'HP3D': [0, 500], 'PW3D': [0, 6_000]}
+        1: {    # CNET
+            'train': {'MPii': [0, 750], 'HP3D': [0, 15_000]},
+            'test': {'HP3D': [0, 250], 'PW3D': [0, 3_500]}
+            },
+        0: {    # BB
+            'train': {'MPii': [0, 5_000], 'HP3D': [0, 25_000]},
+            'test': {'HP3D': [0, 500], 'PW3D': [0, 6_000]}
+            },
     }
     fig, ax = plt.subplots()
     ax.hist(MSE_errs, label='all MSE', bins=num_bins)
     ax.hist(E_t_MSE_errs, label='E_thresh MSE', bins=num_bins)
     ax.set(title=title, xlabel='GT 3D MSE Loss', ylabel='Count', 
-           xlim=[0, 30_000], ylim=ylims[task][dataset])
+           xlim=[0, 30_000], ylim=ylims[cnet][task][dataset])
     ax.legend()
     if save_dir is not None:
         plt.savefig(save_dir) 
@@ -175,16 +201,58 @@ def plot_TTT_loss(config, task='test'):
             losses.append(bb_losses)
         losses = np.concatenate(losses)
 
-        save_dir = f'../../outputs/{task}set/{dataset}_{task}_'
+        # want consistency loss vs GT cnet target MSE
+        losses = losses[:, [0, 2]]
+        losses[:, 1] /= 1000    # scale
+
+        bb_name = config.test_backbones[0].upper() if len(config.test_backbones) == 1 else 'multi'
+        save_dir = f'../../outputs/{task}set/{dataset}_{task}_{bb_name}'
         title = 'Testset ' if task == 'test' else 'Trainset '
         if config.TTT_loss == 'consistency':
-            save_dir += rcnet_targets_name + '_consist_losses.png'
-            title += rcnet_targets_name + ' Consist. Loss vs GT 3D MSE'
-            utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
-                                            xlabel='Consistency Loss', ylabel='GT 3D MSE Loss',
-                                            x_lim=[0, 1], y_lim=[0, 200], alpha=0.15)
+            save_dir += '_consist_losses.png'
+            title += rcnet_targets_name + ' Consist. Loss vs GT CNet MSE' #' Consist. Loss vs GT 3D MSE'
+
+            title = f'{dataset} {config.test_backbones[0].upper()} Consistency Loss vs. GT CNet Prediction Err.'
+
+            fig, ax = utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
+                                            xlabel='Consistency Loss', ylabel='GT 3D MSE', 
+                                            # data_label='TTA Loss',
+                                            # x_lim=[0, 12.5], y_lim=[0, 125], 
+                                            x_lim=[0, 12.5], y_lim=[0, 30], 
+                                            alpha=0.05,
+                                            # data_label='test sample loss',
+                                            )
+            # split data into 10 bins according to x values 0,1,2...,10
+            losses_sorted = np.sort(losses, axis=0)
+            
+            # avg the y values in each bin
+            bin_size = 1
+            num_bins = 50
+            
+            # get the x values for each bin
+            bin_edges = np.arange(0, num_bins*bin_size + 1, bin_size)
+            bin_vals = np.arange(0.5, num_bins*bin_size, bin_size)
+
+            # get the y values for each bin
+            bin_ys = []
+            for i, edge in enumerate(bin_edges[:-1]):
+                ys = losses_sorted[np.logical_and(losses_sorted[:,0] > edge, losses_sorted[:,0] < bin_edges[i+1])][:,1]
+                bin_ys.append(np.mean(ys))
+
+            # replace nans with 0's and trim to same length as bin_vals
+            lim = 11
+            bin_ys = np.nan_to_num(bin_ys)
+            bin_ys = bin_ys[:len(bin_vals)][:lim]
+            bin_vals = bin_vals[:lim]
+
+            # plot the avg y values
+            ax.plot(bin_vals, bin_ys, 'o--', markersize=5, alpha=1, color='red', label='binned avg. GT loss')
+            ax.legend()
+            plt.savefig(save_dir, bbox_inches='tight') 
+            plt.close()
+
         if config.TTT_loss == 'reproj_2d':
-            save_dir += rcnet_targets_name + '_reproj_2d_losses.png'
+            save_dir += '_reproj_2d_losses.png'
             title += rcnet_targets_name + ' 2D reproj. Loss vs GT 3D MSE'
             utils.quick_plot.simple_2d_plot(losses, save_dir=save_dir, title=title, 
                                             xlabel='2D reproj Loss', ylabel='GT 3D MSE Loss',

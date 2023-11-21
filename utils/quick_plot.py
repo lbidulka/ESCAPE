@@ -2,13 +2,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def simple_2d_plot(data, save_dir=None, 
-                   title='Plot', xlabel='X', ylabel='Y',
-                   x_lim=None, y_lim=None, alpha=0.1):
+                   title='Plot', xlabel='X', ylabel='Y', data_label=None,
+                   x_lim=None, y_lim=None, alpha=0.1,):
     '''
     simple 2D plotting
     '''
     fig, ax = plt.subplots()
-    ax.plot(data[:,0], data[:,1], 'o', markersize=1, alpha=alpha)
+    ax.plot(data[:,0], data[:,1], 'o', markersize=1, alpha=alpha, label=data_label)
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
