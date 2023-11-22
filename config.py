@@ -45,13 +45,13 @@ def get_config():
     #                 'test', 'plot_TTT_loss'] 
     # config.tasks = ['train_CNet', 'make_RCNet_trainset', 
     #                 'train_RCNet', 'test', 'plot_TTT_loss']
-    # config.tasks = ['make_kpt_amass']
     # config.tasks = ['test', 'train_CNet', 'test']
     # config.tasks = ['pretrain_CNet']
     # config.tasks = ['pretrain_RCNet']
     
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
-    config.tasks = ['train_CNet', 'test']
+    # config.tasks = ['train_CNet', 'test']
+    config.tasks = ['train_CNet', 'make_RCNet_trainset', 'train_RCNet', 'test']
 
     # config.tasks = ['test']
     # config.tasks = ['test', 'plot_test_energies']
@@ -60,7 +60,7 @@ def get_config():
 
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet']#, 'test',]# 'plot_TTT_loss', 'plot_TTT_train_corr']
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss',] # 'plot_TTT_train_corr']
-    config.tasks = ['test', 'plot_E_sep',] # plot_TTT_loss, plot_E_sep
+    # config.tasks = ['test', 'plot_E_sep',] # plot_TTT_loss, plot_E_sep
 
     # config.tasks = ['optuna_CNet', 'optuna_TTT']
 
@@ -68,10 +68,10 @@ def get_config():
 
     # config.tasks = ['train_CNet', 'export_agora']
 
-    config.tasks = ['test', 'plot_TTT_loss']
+    # config.tasks = ['test', 'plot_TTT_loss']
     # config.tasks = ['export_agora']
     # config.tasks = ['plot_TTT_loss']
-    config.tasks = ['plot_E_sep'] # plot_E_sep, plot_E_sep_cnet, get_inference_time 
+    # config.tasks = ['plot_E_sep'] # plot_E_sep, plot_E_sep_cnet, get_inference_time 
     # config.tasks = ['test', 'test_trainsets', 'plot_E_sep']
     config.tasks = ['test']
     # config.tasks = ['make_testset']
@@ -80,7 +80,7 @@ def get_config():
     config.optuna_num_trials = 1
     config.print_config = False
     config.err_binned_results = True
-    config.include_target_kpt_errs = True  # report individual target kpt erors?
+    config.include_target_kpt_errs = False  # report individual target kpt erors?
     config.use_cnet = True
     config.use_features = False  # use feature maps as input to CNet?
 
@@ -108,19 +108,14 @@ def get_config():
 
     # Fancy Training Options
     config.PA_mse_loss = True           # use PA-MSE loss?
-    config.zero_orientation = False     # zero out the orientation of CNet inputs?
+    config.zero_orientation = True     # zero out the orientation of CNet inputs?
     config.cotrain = True if 'cotrain' in config.tasks else False
-    config.pretrain_AMASS = False        # use pretrain networks on AMASS?
-    config.AMASS_scale = 0.4            # scale AMASS data by this factor when getting kpts
-    config.loss_pose_scaling = False
-    config.only_hard_samples = False     # only train on samples with high error?
-    config.hard_sample_thresh = 3000     # threshold for hard samples
-    config.sample_weighting = False
+
     config.continue_train_CNet = False
     config.continue_train_RCNet = False
      
     # TTT
-    config.test_adapt = False
+    config.test_adapt = True
     config.TTT_e_thresh = True      # only apply TTT to samples with samples below energy thresh?
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
     config.TTT_from_file = True
@@ -128,26 +123,15 @@ def get_config():
         config.test_adapt_lr = 5e-4
         config.adapt_steps = 5 #2
         config.TTT_errscale = 1e2
-    if config.TTT_loss == 'consistency':
-        if config.pretrain_AMASS:
-            config.test_adapt_lr = 2e-4 # 5e-4
-            config.adapt_steps = 2 
-        else:
-            # config.test_adapt_lr = 5e-4 # 5e-4
-            # config.adapt_steps = 3
-            
-            # CLIFF
-            config.test_adapt_lr = 5e-4 # 5e-4
-            config.adapt_steps = 2 if config.TTT_e_thresh else 1
+    if config.TTT_loss == 'consistency':        
+        config.test_adapt_lr = 5e-4 # 5e-4
+        config.adapt_steps = 2 if config.TTT_e_thresh else 1
 
-            # BEDLAM-CLIFF
-            # config.test_adapt_lr = 1e-4 # 5e-4
-            # config.adapt_steps = 1
         config.TTT_errscale = 1e2
 
     # DATA
     # config.train_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse'] # 'spin', 'hybrik', 'cliff', 'pare', 'bal_mse'
-    config.train_backbones = ['pare',]
+    config.train_backbones = ['bal_mse',]
     # config.train_backbones = ['bedlam-cliff', 'cliff']
 
     config.trainsets = ['MPii', 'HP3D',] # 'MPii', 'HP3D', 
@@ -161,7 +145,7 @@ def get_config():
     config.val_sets = []
     
     # config.test_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse']
-    config.test_backbones = ['pare',]
+    config.test_backbones = ['bal_mse',]
     # config.test_backbones = ['bedlam-cliff',]
 
     # config.testset = 'PW3D'
@@ -235,9 +219,6 @@ def get_config():
     config.cnet_dataset_path = '/data/lbidulka/adapt_3d/'
     config.pose_datasets_path = '/data/lbidulka/pose_datasets/'
     config.optuna_log_path = '../../outputs/optuna/'
-
-    config.amass_path = config.pose_datasets_path + 'AMASS/processed_AMASS.npz'
-    config.amass_kpts_path = config.pose_datasets_path + 'AMASS/processed_AMASS_kpts.npz'
 
     # trainsets
     config.backbone_trainset_lims = {

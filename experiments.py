@@ -27,7 +27,6 @@ from core.cnet_eval import eval_gt
 from config import get_config
 
 from utils.optuna_objectives import optuna_objective
-from utils.AMASS import make_amass_kpts
 from utils.output_reporting import plot_TTT_loss, test_trainsets, plot_energies, print_test_summary
 
 
@@ -91,6 +90,11 @@ def setup_adapt_nets(config):
             R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
                             R=True,
                             in_kpts=config.EVAL_JOINTS)
+            # cnet = adapt_net(config, target_kpts=config.rcnet_targets,
+            #                 in_kpts=config.EVAL_JOINTS)
+            # R_cnet = adapt_net(config, target_kpts=config.cnet_targets,
+            #                 R=True,
+            #                 in_kpts=config.EVAL_JOINTS)
     return cnet, R_cnet
 
 def main_worker(config): 
@@ -100,18 +104,12 @@ def main_worker(config):
             make_hybrik_pred_dataset(config, 'train')
         elif task == 'make_testset':
             make_hybrik_pred_dataset(config, 'test')
-        elif task == 'make_kpt_amass':
-            make_amass_kpts(config)
-        elif task == 'pretrain_CNet':
-            cnet.train(pretrain_AMASS=True)
         elif task == 'train_CNet':
-            cnet.train(continue_train=config.pretrain_AMASS)
+            cnet.train()
         elif task == 'make_RCNet_trainset':
             cnet.write_train_preds()
-        elif task == 'pretrain_RCNet':
-            R_cnet.train(pretrain_AMASS=True)
         elif task == 'train_RCNet':
-            R_cnet.train(continue_train=config.pretrain_AMASS)
+            R_cnet.train()
         elif task == 'cotrain':
             cotrainer = CoTrainer(cnet, R_cnet)
             cotrainer.train()

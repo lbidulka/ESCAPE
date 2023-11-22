@@ -312,14 +312,14 @@ def eval_gt(cnet, R_cnet, config,
     top_img_ids, top_gts, top_preds, top_corrs = metrics.get_top_corr(backbone_preds, corr_preds, gts, 
                                                            img_idxs, config.cnet_targets, n=50)
     
-    if dataset_name == 'PW3D':
-        # add specific img id to the top corrections
-        # want to add sample with img id = 22408
-        idx_22408 = np.where(img_idxs == 22408)[0][0]
-        top_img_ids = np.concatenate([np.array([22408])[None,:], top_img_ids])
-        top_gts = np.concatenate([gts[idx_22408:idx_22408+1], top_gts])
-        top_preds = np.concatenate([backbone_preds[idx_22408:idx_22408+1], top_preds])
-        top_corrs = np.concatenate([corr_preds[idx_22408:idx_22408+1], top_corrs])
+    # if dataset_name == 'PW3D':
+    #     # add specific img id to the top corrections
+    #     # want to add sample with img id = 22408
+    #     idx_22408 = np.where(img_idxs == 22408)[0][0]
+    #     top_img_ids = np.concatenate([np.array([22408])[None,:], top_img_ids])
+    #     top_gts = np.concatenate([gts[idx_22408:idx_22408+1], top_gts])
+    #     top_preds = np.concatenate([backbone_preds[idx_22408:idx_22408+1], top_preds])
+    #     top_corrs = np.concatenate([corr_preds[idx_22408:idx_22408+1], top_corrs])
 
     # save top corrections
     top_corr_outpath = '../../outputs/qualitative/'
@@ -402,11 +402,22 @@ def eval_gt(cnet, R_cnet, config,
         corr_target_kpt_errs = corr_target_kpt_errs.mean(0)
         bb_target_kpt_errs = bb_target_kpt_errs.mean(0)
 
+        # average feet kpts and hand kpts together
+        corr_target_kpt_errs = np.concatenate([corr_target_kpt_errs[:2].mean(0, keepdims=True), 
+                                               corr_target_kpt_errs[2:].mean(0, keepdims=True)])
+        bb_target_kpt_errs = np.concatenate([bb_target_kpt_errs[:2].mean(0, keepdims=True),
+                                                bb_target_kpt_errs[2:].mean(0, keepdims=True)])
+        corr_mpjpe_tails = [np.concatenate([corr_mpjpe_tails[i][:2].mean(0, keepdims=True),
+                                            corr_mpjpe_tails[i][2:].mean(0, keepdims=True)]) for i in range(len(num_tails))]
+        bb_mpjpe_tails = [np.concatenate([bb_mpjpe_tails[i][:2].mean(0, keepdims=True),
+                                            bb_mpjpe_tails[i][2:].mean(0, keepdims=True)]) for i in range(len(num_tails))]
+        
         # add to results
-        eval_summary_json['corrected'].update(dict(zip(cnet.target_kpts, corr_target_kpt_errs)))
-        eval_summary_json['corrected'].update(dict(zip([f'({kpt} ^10%)' for kpt in cnet.target_kpts], corr_mpjpe_tails[1])))
-        eval_summary_json['backbone'].update(dict(zip(cnet.target_kpts, bb_target_kpt_errs)))
-        eval_summary_json['backbone'].update(dict(zip([f'({kpt} ^10%)' for kpt in cnet.target_kpts], bb_mpjpe_tails[1])))
+        titles = ['feet', 'hands']
+        eval_summary_json['corrected'].update(dict(zip(titles, corr_target_kpt_errs)))
+        eval_summary_json['corrected'].update(dict(zip([f'({kpt} ^10%)' for kpt in titles], corr_mpjpe_tails[1])))
+        eval_summary_json['backbone'].update(dict(zip(titles, bb_target_kpt_errs)))
+        eval_summary_json['backbone'].update(dict(zip([f'({kpt} ^10%)' for kpt in titles], bb_mpjpe_tails[1])))
     
     
     return eval_summary_json
