@@ -31,82 +31,52 @@ def cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d,):
     elif config.TTT_loss == 'consistency':
         loss = (backbone_pred[:,config.rcnet_targets] - Rcnet_pred[:,config.rcnet_targets])
         loss = torch.square(loss*config.TTT_errscale).mean()
-        # loss = torch.abs(loss*config.TTT_errscale).mean()
     else:
         raise NotImplementedError
     return loss
 
-def unpack_test_data(data, m, model_2d, use_data_file, config, flip_test=True):
+def unpack_test_data(data, config,):
     '''
     Unpack CNet test sample 
     '''
-    if use_data_file:
-        labels = {}
-        output = SimpleNamespace()
-        output.pred_xyz_jts_17 = data[:,0].to(config.device)
-        labels['target_xyz_17'] = data[:,1].to(config.device)
-        # if theres no img_ids, add dummies
-        if data.shape[1] == 2:
-            img_ids = torch.ones(data.shape[0], 1) * -1
-        else:
-            img_ids = data[:,2,:1].to(config.device)
-        poses_2d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)[:,:,:2]    # TEMP: using labels for 2D
+    labels = {}
+    output = SimpleNamespace()
+    output.pred_xyz_jts_17 = data[:,0].to(config.device)
+    labels['target_xyz_17'] = data[:,1].to(config.device)
+    # if theres no img_ids, add dummies
+    if data.shape[1] == 2:
+        img_ids = torch.ones(data.shape[0], 1) * -1
     else:
-        (inps, labels, img_ids, bboxes) = data
-        if isinstance(inps, list):
-            inps = [inp.to(config.device) for inp in inps]
-        else:
-            inps=inps.to(config.device)
-        for k, _ in labels.items():
-            try:
-                labels[k] = labels[k].to(config.device)
-            except AttributeError:
-                assert (k == 'type') or (k == 'img_path')
-        with torch.no_grad():
-            output = m(inps, flip_test=flip_test, bboxes=bboxes.to(config.device), img_center=labels['img_center'])
-
-            if config.test_adapt:
-                poses_2d = get_2d_preds(model_2d, inps, labels, config)
-            else:
-                poses_2d = None
+        img_ids = data[:,2,:1].to(config.device)
+    poses_2d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)[:,:,:2] # weak reproj GT 2D
 
     return output, labels, img_ids, poses_2d
 
 def eval_gt(cnet, R_cnet, config, 
-            m=None, gt_eval_dataset=None, 
             testset_path=None, backbone_scale=1.0,
-            test_adapt=False, 
-            use_data_file=False,
-            subset=None,):
+            test_adapt=False, subset=None,):
     '''
     '''
     if test_adapt:
-        batch_size = 1 # 1
+        batch_size = 1
     else:
         batch_size = 4096
     # Data/Setup
-    if use_data_file:
-        test_file = testset_path
-        test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
-        if subset is None: 
-            subset = config.test_eval_subset
-        test_data = test_data[subset, :]
-        test_data *= backbone_scale
-        # gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
-        gt_eval_dataset = cnet_pose_dataset(test_data, datasets=config.testsets, 
-                                            backbones=config.test_backbones,
-                                            config=config,)
-    gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False, 
-                                                #  num_workers=2,
-                                                drop_last=False)#, pin_memory=True)
+    test_file = testset_path
+    test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
+    if subset is None: 
+        subset = config.test_eval_subset
+    test_data = test_data[subset, :]
+    test_data *= backbone_scale
+    gt_eval_dataset = cnet_pose_dataset(test_data, datasets=config.testsets, 
+                                        backbones=config.test_backbones,
+                                        config=config,)
+    gt_eval_loader = torch.utils.data.DataLoader(gt_eval_dataset, batch_size=batch_size, shuffle=False,
+                                                drop_last=False)
     kpt_pred = {}
     kpt_all_pred = {}
-    if m is not None: m.eval()
     cnet.eval()
     R_cnet.eval()
-    if test_adapt and (config.TTT_loss == 'reproj_2d') and (use_data_file == False):
-        model_2d = setup_2d_model(config)
-    else: model_2d = None
 
     def set_bn_eval(module):
         ''' Batch Norm layer freezing '''
@@ -120,7 +90,7 @@ def eval_gt(cnet, R_cnet, config,
     gts = []
     losses = []
     for it, data in enumerate(tqdm(gt_eval_loader, dynamic_ncols=True)):
-        output, labels, img_ids, poses_2d = unpack_test_data(data, m, model_2d, use_data_file, config)
+        output, labels, img_ids, poses_2d = unpack_test_data(data, config)
         backbone_pred = output.pred_xyz_jts_17.reshape(output.pred_xyz_jts_17.shape[0], -1, 3)
         if config.use_cnet:
             corrected_pred_init = None            
@@ -160,7 +130,6 @@ def eval_gt(cnet, R_cnet, config,
                         optimizer.step()
 
                         gt_3d = labels['target_xyz_17'].reshape(labels['target_xyz_17'].shape[0], -1, 3)
-                        # gt_mse = torch.square((backbone_pred[:,config.distal_kpts,:] - gt_3d[:,config.distal_kpts])*config.TTT_errscale).mean()
                         gt_mse = torch.square((corrected_pred - gt_3d)*config.TTT_errscale).mean()
 
                         # log true mse between cnet predicted correction, and GT correction
@@ -186,7 +155,6 @@ def eval_gt(cnet, R_cnet, config,
                     corrected_pred_init = backbone_pred.detach().clone()
                     corrected_pred[:, :, config.cnet_dont_corr_dims] = corrected_pred_init[:, :, config.cnet_dont_corr_dims]
                 # Only use TTT improved preds for specified dims
-                # if config.split_corr_dim_trick:
                 if len(config.split_corr_dims) > 0:
                     if corrected_pred_init is None:
                         corrected_pred_init = backbone_pred.detach().clone()
@@ -208,9 +176,6 @@ def eval_gt(cnet, R_cnet, config,
                 'xyz_17': pred_xyz_jts_17.reshape(-1, 3),
             }
         kpt_all_pred.update(kpt_pred)
-        # early stop if testing on subset & not using file
-        if not use_data_file and (it+1) >= config.test_eval_limit:
-            break
 
     # Investigation of TTT loss
     if test_adapt:
@@ -307,26 +272,18 @@ def eval_gt(cnet, R_cnet, config,
     eval_summary_json = {
         'corrected': {
             'PA-MPJPE': corr_pa_mpjpe_all,
-            # '(P1 ^25%)': corr_pa_mpjpe_tails[2],
             '(P1 ^10%)': corr_pa_mpjpe_tails[1],
-            # '(P1 ^5%)': corr_pa_mpjpe_tails[0],
             'MPJPE': corr_mpjpe_all,
-            # '(P2 ^25%)': corr_mpjpe_tails[2],
             '(P2 ^10%)': corr_mpjpe_tails[1],
-            # '(P2 ^5%)': corr_mpjpe_tails[0],
             'x': corr_err[0],
             'y': corr_err[1],
             'z': corr_err[2],
         },
         'backbone': {
             'PA-MPJPE': bb_pa_mpjpe_all,
-            # '(P1 ^25%)': bb_pa_mpjpe_tails[2],
             '(P1 ^10%)': bb_pa_mpjpe_tails[1],
-            # '(P1 ^5%)': bb_pa_mpjpe_tails[0],
             'MPJPE': bb_mpjpe_all,
-            # '(P2 ^25%)': bb_mpjpe_tails[2],
             '(P2 ^10%)': bb_mpjpe_tails[1],
-            # '(P2 ^5%)': bb_mpjpe_tails[0],
             'x': backbone_err[0],
             'y': backbone_err[1],
             'z': backbone_err[2],

@@ -14,7 +14,7 @@ H36M kpts:
 'right_shoulder', 'right_elbow', 'right_wrist', # 16
 '''
 
-RCNET_TARGET_NAMES_OTHER = {
+RCNET_TARGET_NAMES = {
     'Shoulders': [11, 14],
     'Elbows': [12, 15],
     'Hips': [1, 4],
@@ -104,10 +104,9 @@ def get_config():
     config.continue_train_RCNet = False
      
     # TTT
-    config.test_adapt = True
+    config.test_adapt = False
     config.TTT_e_thresh = True      # only apply TTT to samples with samples below energy thresh?
     config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
-    config.TTT_from_file = True
     if config.TTT_loss == 'reproj_2d':
         config.test_adapt_lr = 5e-4
         config.adapt_steps = 5 #2
@@ -119,9 +118,7 @@ def get_config():
         config.TTT_errscale = 1e2
 
     # DATA
-    # config.train_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse'] # 'spin', 'hybrik', 'cliff', 'pare', 'bal_mse'
-    config.train_backbones = ['bal_mse',]
-    # config.train_backbones = ['bedlam-cliff', 'cliff']
+    config.train_backbones = ['pare',] # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff', 
 
     config.trainsets = ['MPii', 'HP3D',] # 'MPii', 'HP3D', 
     config.trainsets_str = '_'.join(config.trainsets)
@@ -130,12 +127,7 @@ def get_config():
     #                    'HP3D': 'cliff',}
     config.val_sets = []
     
-    # config.test_backbones = ['hybrik', 'spin', 'pare', 'cliff', 'bal_mse']
-    config.test_backbones = ['bal_mse',]
-    # config.test_backbones = ['bedlam-cliff',]
-
-    # config.testset = 'PW3D'
-    # config.testset = 'HP3D'
+    config.test_backbones = ['pare',] # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff', 
 
     config.testsets = ['PW3D', 'HP3D', ]
     # config.testsets = ['PW3D',]
@@ -165,16 +157,13 @@ def get_config():
         'pare': 1.0,
         'cliff': 1.0,
         'bal_mse': 1.0,
-        'bedlam-cliff': 1.0,
     }
     config.mmlab_backbones = ['spin', 'pare', 'cliff', 'bal_mse']
-    config.bedlam_backbones = ['bedlam-cliff',]
 
     # Main base baths
-    config.cnet_ckpt_path = '../../ckpts/' #hybrIK/w_{}/'.format(config.trainsets_str)
+    config.cnet_ckpt_path = '../../ckpts/'
     config.cnet_dataset_path = '/data/lbidulka/adapt_3d/'
     config.pose_datasets_path = '/data/lbidulka/pose_datasets/'
-    config.optuna_log_path = '../../outputs/optuna/'
 
     # trainsets
     config.backbone_trainset_lims = {
@@ -211,9 +200,6 @@ def get_config():
             elif (train_backbone in config.mmlab_backbones) and (trainset in config.backbone_trainset_lims[train_backbone].keys()):
                 path = '{}{}/mmlab_{}_cnet_train.npy'.format(config.cnet_dataset_path, trainset, train_backbone,)
                 trainlim = config.backbone_trainset_lims[train_backbone][trainset]
-            elif (train_backbone in config.bedlam_backbones) and (trainset in config.backbone_trainset_lims[train_backbone].keys()):
-                path = '{}{}/bedlam_{}_cnet_train.npy'.format(config.cnet_dataset_path, trainset, train_backbone,)
-                trainlim = config.backbone_trainset_lims[train_backbone][trainset]
             else:
                 print('WARNING: No trainset for {} and {}'.format(train_backbone, trainset))
             if path: 
@@ -245,14 +231,6 @@ def get_config():
                 path = '{}{}/mmlab_{}_test.npy'.format(config.cnet_dataset_path, 
                                                     testset,
                                                     test_backbone,)
-                if not config.TTT_from_file:
-                    raise NotImplementedError
-            elif test_backbone in config.bedlam_backbones:
-                path = '{}{}/bedlam_{}_test.npy'.format(config.cnet_dataset_path, 
-                                                    testset,
-                                                    test_backbone,)
-                if not config.TTT_from_file:
-                    raise NotImplementedError
             else:
                 raise NotImplementedError
             if path:
@@ -270,7 +248,6 @@ def get_config():
     
     config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
     config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
-    RCNET_TARGET_NAMES = RCNET_TARGET_NAMES_OTHER
     config.cnet_targets = config.distal_kpts
     # get all the entries in the dict, make a combined list
     config.rcnet_targets_name = ['Hips', 'Shoulders']

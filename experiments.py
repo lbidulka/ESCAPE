@@ -11,7 +11,6 @@ det_transform = T.Compose([T.ToTensor()])
 from datasets.hybrik import load_hybrik, get_datasets, make_hybrik_pred_dataset
 from cnet.multi_distal import multi_distal
 from cnet.full_body import adapt_net
-from cnet.full_body_feats import adapt_net as adapt_net_feats
 from core.cnet_eval import eval_gt
 from config import get_config
 
@@ -19,16 +18,9 @@ from utils.output_reporting import plot_TTT_loss, test_trainsets, plot_energies,
 
 
 def test(cnet, R_cnet, config, print_summary=True):
-    # Get HybrIK model if required
-    if config.TTT_from_file == False:
-        backbone, backbone_cfg = load_hybrik(config)
-        _, testset = get_datasets(backbone_cfg, config)
-    else:
-        backbone, backbone_cfg, testset = None, None, None
     # Load CNet & R-CNet, then test
     cnet.load_cnets()
     if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets()
-    if backbone is not None: backbone.to(config.device)
 
     allsets_summary = {}
     for testset_name, info in config.testset_info.items():
@@ -39,13 +31,14 @@ def test(cnet, R_cnet, config, print_summary=True):
             cnet.load_cnets(print_str=False)
             if config.test_adapt:
                 if config.test_adapt and (config.TTT_loss == 'consistency'): R_cnet.load_cnets(print_str=False)
-                TTT_eval_summary = eval_gt(cnet, R_cnet, config, backbone, testset, 
-                                        testset_path=test_path, backbone_scale=test_scale, 
-                                        test_adapt=True, use_data_file=config.TTT_from_file,
-                                        subset=config.test_eval_subsets[testset_name],)
+                TTT_eval_summary = eval_gt(cnet, R_cnet, config, 
+                                        testset_path=test_path, 
+                                        backbone_scale=test_scale, 
+                                        test_adapt=True, subset=config.test_eval_subsets[testset_name],)
             cnet.load_cnets(print_str=False)
-            eval_summary = eval_gt(cnet, R_cnet, config, testset, backbone, 
-                                testset_path=test_path, backbone_scale=test_scale, use_data_file=True,
+            eval_summary = eval_gt(cnet, R_cnet, config, 
+                                testset_path=test_path, 
+                                backbone_scale=test_scale, 
                                 subset=config.test_eval_subsets[testset_name],)
             summary[test_backbone]['vanilla'] = eval_summary['backbone']
             summary[test_backbone]['w/CN'] = eval_summary['corrected']
@@ -65,22 +58,16 @@ def setup_adapt_nets(config):
         cnet = multi_distal(config)
         R_cnet = None # TODO: MULTI-DISTAL R-CNET
     else:
-        if config.use_features:
-            cnet = adapt_net_feats(config, target_kpts=config.cnet_targets, 
-                             in_kpts=config.EVAL_JOINTS)
-            R_cnet = adapt_net_feats(config, target_kpts=config.rcnet_targets, R=True, 
-                               in_kpts=config.EVAL_JOINTS)
-        else:
-            cnet = adapt_net(config, target_kpts=config.cnet_targets,
-                            in_kpts=config.EVAL_JOINTS)
-            R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
-                            R=True,
-                            in_kpts=config.EVAL_JOINTS)
-            # cnet = adapt_net(config, target_kpts=config.rcnet_targets,
-            #                 in_kpts=config.EVAL_JOINTS)
-            # R_cnet = adapt_net(config, target_kpts=config.cnet_targets,
-            #                 R=True,
-            #                 in_kpts=config.EVAL_JOINTS)
+        cnet = adapt_net(config, target_kpts=config.cnet_targets,
+                        in_kpts=config.EVAL_JOINTS)
+        R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
+                        R=True,
+                        in_kpts=config.EVAL_JOINTS)
+        # cnet = adapt_net(config, target_kpts=config.rcnet_targets,
+        #                 in_kpts=config.EVAL_JOINTS)
+        # R_cnet = adapt_net(config, target_kpts=config.cnet_targets,
+        #                 R=True,
+        #                 in_kpts=config.EVAL_JOINTS)
     return cnet, R_cnet
 
 def main_worker(config): 

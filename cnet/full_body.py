@@ -116,13 +116,13 @@ class adapt_net():
         step_sizes = step_sizes[corr_idxs]
         cnet_in = cnet_in[corr_idxs]
 
-        # rotate poses to zero orientation 
-        if self.config.zero_orientation:
-            cnet_in, rot, i_rot = self._zero_orientation(cnet_in)
         # zero to hip
         if self.config.cnet_align_root:
             hips = cnet_in[:, 0].clone().unsqueeze(1)
             cnet_in -= hips
+        # rotate poses to zero orientation 
+        if self.config.zero_orientation:
+            cnet_in, rot, i_rot = self._zero_orientation(cnet_in)
 
         # correct as required
         for i in range(self.config.corr_steps):
@@ -153,7 +153,6 @@ class adapt_net():
         Correct the input poses
         '''
         inp = in_pose[:,self.in_kpts].flatten(1)
-        # inp = inp.reshape(inp.shape[0], -1) #.flatten(1)
         pred_errs = self.cnet(inp) / self.config.err_scale
         pred_errs = pred_errs.reshape(-1, len(self.target_kpts), 3) 
         corr_pred = in_pose.detach().clone()
@@ -235,14 +234,7 @@ class adapt_net():
                 idx = np.where(data[1,:,:].sum(axis=1) != 0)
                 data = data[:, idx, :]
                 data = data.squeeze()
-            # TEMP DEBUG ----------------------------------------------
-            if ('RICH' in trainset_path) or ('AGORA' in trainset_path) or ('BEDLAM' in trainset_path):
-                # add img ids to data
-                ids = torch.arange(len(data[1])).reshape(-1,1)
-                ids = ids.repeat(51, 1)
-                ids = ids.reshape(1, -1, 51)
-                data = torch.cat([data, ids], axis=0)
-            # ----------------------------------------------------------
+
             if data_lim is not None:
                 # get random subset of data
                 self.config.train_data_ids.append(np.random.choice(data.shape[1], 

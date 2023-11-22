@@ -28,25 +28,7 @@ class cnet_pose_dataset(Dataset):
         if self.transforms:
             for transform in self.transforms:
                 if np.random.rand() < transform.p:
-                    sample = transform(sample)
-
-        # use id of sample to load feature maps if required
-        if self.config.use_features:
-            if sample.shape[0] < 4:
-                f = 5
-            id = int(sample[2].flatten()[0].item())
-            # load feature maps from file
-            dataset_idx = int(sample[3].flatten()[0].item())
-            dataset = self.datasets[dataset_idx]
-            backbone_idx = int(sample[4].flatten()[0].item())
-            backbone = self.backbones[backbone_idx] if self.train else self.backbones[backbone_idx]
-            framework = 'mmlab' if backbone in self.config.mmlab_backbones else 'bedlam'
-
-            # feat_path = self.data_path.split('mmlab')[0] + f'feature_maps/{self.data_path.split(".")[0].split("/")[-1]}/{id}.npy'
-            feat_path = f'{self.data_path}{dataset}/feature_maps/{framework}_{backbone}_{"train" if self.train else "test"}/{id}.npy'
-            feats = np.load(feat_path)
-            sample = {'data': sample,
-                      'feats': feats}        
+                    sample = transform(sample)     
         return sample
 
 class hflip_keypoints():
