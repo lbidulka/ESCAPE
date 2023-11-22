@@ -76,7 +76,7 @@ def eval_gt(cnet, R_cnet, config,
             m=None, gt_eval_dataset=None, 
             testset_path=None, backbone_scale=1.0,
             test_adapt=False, 
-            use_data_file=False, agora_out=False,
+            use_data_file=False,
             subset=None,):
     '''
     '''
@@ -223,22 +223,6 @@ def eval_gt(cnet, R_cnet, config,
         backbone_name = testset_path.split('/')[-1].split('.')[-2]
         TTT_losses_outpath +=  '_'.join([backbone_name, config.TTT_loss, 'losses.npy'])
         np.save(TTT_losses_outpath, TTT_losses)
-
-    # save corrected preds for agora eval
-    if agora_out:
-        agora_corr_preds = np.concatenate(corr_preds, axis=0)
-        # order was scrambled according to config.test_eval_subset, so we need to reverse it 
-        # (since agora is expecting the original order)
-        reverse_idxs = [np.where(np.array(config.test_eval_subset) == i)[0][0] for i in range(len(config.test_eval_subset))]
-        agora_corr_preds = agora_corr_preds[reverse_idxs]
-
-        # save npy file
-        if test_adapt:
-            test_out_file = testset_path.replace('_test.npy', '_corrected_+TTT.npy')
-        else:
-            test_out_file = testset_path.replace('_test.npy', '_corrected.npy')
-        print("Saving corrected preds to {} for AGORA eval...".format(test_out_file))
-        np.save(test_out_file, agora_corr_preds)
     
     # concat all preds and gts
     backbone_preds = np.concatenate(backbone_preds, axis=0)

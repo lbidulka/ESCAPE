@@ -21,13 +21,6 @@ RCNET_TARGET_NAMES_OTHER = {
     'Knees': [2, 5],
 }
 
-RCNET_TARGET_NAMES_AGORA = {
-    'Shoulders': [8, 11],
-    'Elbows': [9, 12],
-    'Hips': [0, 3],
-    'Knees': [1, 4],
-}
-
 
 def get_config():
     config = SimpleNamespace()
@@ -66,10 +59,7 @@ def get_config():
 
     # config.tasks = ['cotrain', 'test',]# 'plot_TTT_loss']
 
-    # config.tasks = ['train_CNet', 'export_agora']
-
     # config.tasks = ['test', 'plot_TTT_loss']
-    # config.tasks = ['export_agora']
     # config.tasks = ['plot_TTT_loss']
     # config.tasks = ['plot_E_sep'] # plot_E_sep, plot_E_sep_cnet, get_inference_time 
     # config.tasks = ['test', 'test_trainsets', 'plot_E_sep']
@@ -134,9 +124,6 @@ def get_config():
     # config.train_backbones = ['bedlam-cliff', 'cliff']
 
     config.trainsets = ['MPii', 'HP3D',] # 'MPii', 'HP3D', 
-    # config.trainsets = ['MPii', 'HP3D', 'RICH'] # 'MPii', 'HP3D', 
-    # config.trainsets = ['AGORA', 'MPii', 'HP3D',]
-    # config.trainsets = ['AGORA', 'BEDLAM',]# 'MPii', 'HP3D',] 
     config.trainsets_str = '_'.join(config.trainsets)
 
     # config.val_sets = {'MPii': 'cliff', 
@@ -148,37 +135,22 @@ def get_config():
     # config.test_backbones = ['bedlam-cliff',]
 
     # config.testset = 'PW3D'
-    # config.testset = 'RICH' 
-    # config.testset = 'AGORA'
     # config.testset = 'HP3D'
 
     config.testsets = ['PW3D', 'HP3D', ]
     # config.testsets = ['PW3D',]
     # config.testsets = ['HP3D',]
-    # config.testsets = ['PW3D', 'RICH']
-
-    if 'export_agora' in config.tasks:
-        config.testset = 'AGORA'
-
-    # bedlam-cliff is in 14 kpt format, so it will mess up eval of other backbones if tried together
-    if 'PW3D' in config.testsets and 'bedlam-cliff' in config.test_backbones:
-        assert len(config.test_backbones) == 1
 
 
     config.test_eval_limit = 120_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
     config.test_eval_subsets = {}
     for testset in config.testsets:
-        if testset in ['PW3D', 'RICH', 'AGORA', 'HP3D']:
-            if testset == 'AGORA' and 'bedlam-cliff' not in config.test_backbones: # or (config.testset == 'PW3D' and 'bedlam-cliff' in config.test_backbones):
-                config.EVAL_JOINTS = [i for i in range(14)]
-            else:
-                config.EVAL_JOINTS = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
+        if testset in ['PW3D', 'HP3D']:
+            config.EVAL_JOINTS = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
             config.EVAL_JOINTS.sort()
             testlens = {
                 'HP3D': 2_875,
                 'PW3D': 35_456, #35_515,
-                'RICH': 21_248,
-                'AGORA': 63_552, #5286,    # AGORA: manually set
             }
             test_eval_subset = np.random.choice(testlens[testset], 
                                                     min(config.test_eval_limit, testlens[testset]), 
@@ -208,8 +180,7 @@ def get_config():
     config.backbone_trainset_lims = {
         'hybrik': {'MPii': None, 'HP3D': None}, # 50_000, None},
         'spin': {'MPii': None, 'HP3D': None}, # 50_000,},
-        'cliff': {'MPii': None,'HP3D': None, 'RICH': None,}, # 50_000,},
-        'bedlam-cliff': {'AGORA': None, 'BEDLAM': None,},
+        'cliff': {'MPii': None,'HP3D': None,}, # 50_000,},
         'pare': {'MPii': None, 'HP3D': None}, # 50_000,},
         'bal_mse': {'MPii': None,'HP3D': None}, # 50_000,},
     }
@@ -268,10 +239,6 @@ def get_config():
                     path = '{}{}/mmlab_{}_test.npy'.format(config.cnet_dataset_path, 
                                                     testset,
                                                     test_backbone,)
-                elif testset in ['RICH', 'AGORA']:
-                    path = '{}{}/bedlam_{}_test.npy'.format(config.cnet_dataset_path, 
-                                                    testset,
-                                                    test_backbone,)
                 else:
                     raise NotImplementedError
             elif test_backbone in config.mmlab_backbones:
@@ -301,14 +268,9 @@ def get_config():
     config.use_multi_distal = False  # Indiv. nets for each limb + distal pred
     config.limbs = ['LA', 'RA', 'LL', 'RL'] # 'LL', 'RL', 'LA', 'RA'    limbs for multi_distal net
     
-    if 'AGORA' in config.testsets  and 'bedlam-cliff' not in config.test_backbones:
-        config.proximal_kpts = [0, 3, 8, 11]    # adjusted due to AGORA data being in 14-joint format already
-        config.distal_kpts = [2, 5, 10, 13]
-        RCNET_TARGET_NAMES = RCNET_TARGET_NAMES_AGORA
-    else:
-        config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
-        config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
-        RCNET_TARGET_NAMES = RCNET_TARGET_NAMES_OTHER
+    config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
+    config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
+    RCNET_TARGET_NAMES = RCNET_TARGET_NAMES_OTHER
     config.cnet_targets = config.distal_kpts
     # get all the entries in the dict, make a combined list
     config.rcnet_targets_name = ['Hips', 'Shoulders']

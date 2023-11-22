@@ -18,7 +18,7 @@ from config import get_config
 from utils.output_reporting import plot_TTT_loss, test_trainsets, plot_energies, print_test_summary
 
 
-def test(cnet, R_cnet, config, print_summary=True, agora_out=False):
+def test(cnet, R_cnet, config, print_summary=True):
     # Get HybrIK model if required
     if config.TTT_from_file == False:
         backbone, backbone_cfg = load_hybrik(config)
@@ -42,13 +42,11 @@ def test(cnet, R_cnet, config, print_summary=True, agora_out=False):
                 TTT_eval_summary = eval_gt(cnet, R_cnet, config, backbone, testset, 
                                         testset_path=test_path, backbone_scale=test_scale, 
                                         test_adapt=True, use_data_file=config.TTT_from_file,
-                                        subset=config.test_eval_subsets[testset_name],
-                                        agora_out=agora_out)
+                                        subset=config.test_eval_subsets[testset_name],)
             cnet.load_cnets(print_str=False)
             eval_summary = eval_gt(cnet, R_cnet, config, testset, backbone, 
                                 testset_path=test_path, backbone_scale=test_scale, use_data_file=True,
-                                subset=config.test_eval_subsets[testset_name],
-                                agora_out=agora_out,)
+                                subset=config.test_eval_subsets[testset_name],)
             summary[test_backbone]['vanilla'] = eval_summary['backbone']
             summary[test_backbone]['w/CN'] = eval_summary['corrected']
             summary[test_backbone]['at V'] = eval_summary['attempted_backbone']
@@ -116,9 +114,6 @@ def main_worker(config):
             test_trainsets(cnet, R_cnet, config,)
             plot_energies(config, task='train')
 
-        elif task == 'export_agora':
-            test(cnet, R_cnet, config, agora_out=True)
-
         elif task == 'plot_E_sep':
             from utils.output_reporting import plot_E_sep
             for testset in config.testsets:
@@ -131,7 +126,7 @@ def main_worker(config):
                 plot_E_sep(config, task='test', dataset=testset, cnet=True)
             for trainset in config.trainsets:
                 plot_E_sep(config, task='train', dataset=trainset, cnet=True)
-                
+
         elif task == 'get_inference_time':
             from utils.inference_timing import get_inference_time
             get_inference_time(config, cnet, R_cnet)
