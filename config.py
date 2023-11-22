@@ -82,7 +82,6 @@ def get_config():
     config.err_binned_results = True
     config.include_target_kpt_errs = False  # report individual target kpt erors?
     config.use_cnet = True
-    config.use_features = False  # use feature maps as input to CNet?
 
     # ENERGY ---
     config.use_cnet_energy = False     # use energy function to select OOD samples?
@@ -181,24 +180,9 @@ def get_config():
                 'RICH': 21_248,
                 'AGORA': 63_552, #5286,    # AGORA: manually set
             }
-            # DEBUG ----
-            if config.use_features:
-                # set the testset to only choose from the samples with extracted feature maps
-
-                # first, crawl the feature map directory to get the list of samples with feature maps
-                feature_map_dir = f'/data/lbidulka/adapt_3d/{testset}/feature_maps/' + 'mmlab_cliff_test'
-                feature_map_files = os.listdir(feature_map_dir)
-                feature_map_ids = [int(f.split('.')[0]) for f in feature_map_files]
-                                
-                # next, 
-                test_eval_subset = np.random.choice(feature_map_ids, 
-                                                    min(config.test_eval_limit, len(feature_map_ids)), 
+            test_eval_subset = np.random.choice(testlens[testset], 
+                                                    min(config.test_eval_limit, testlens[testset]), 
                                                     replace=False)
-            # ----------
-            else:
-                test_eval_subset = np.random.choice(testlens[testset], 
-                                                        min(config.test_eval_limit, testlens[testset]), 
-                                                        replace=False)
             config.test_eval_subsets[testset] = test_eval_subset
         else:
             raise NotImplementedError

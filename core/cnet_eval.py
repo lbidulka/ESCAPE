@@ -43,10 +43,6 @@ def unpack_test_data(data, m, model_2d, use_data_file, config, flip_test=True):
     if use_data_file:
         labels = {}
         output = SimpleNamespace()
-        if config.use_features:
-            # unpack dict
-            output.features = data['feats'].to(config.device)
-            data = data['data']
         output.pred_xyz_jts_17 = data[:,0].to(config.device)
         labels['target_xyz_17'] = data[:,1].to(config.device)
         # if theres no img_ids, add dummies
@@ -87,30 +83,14 @@ def eval_gt(cnet, R_cnet, config,
     if test_adapt:
         batch_size = 1 # 1
     else:
-        if config.use_features:
-            batch_size = 128
-        else:
-            batch_size = 4096
+        batch_size = 4096
     # Data/Setup
     if use_data_file:
         test_file = testset_path
         test_data = torch.from_numpy(np.load(test_file)).float().permute(1,0,2)
         if subset is None: 
             subset = config.test_eval_subset
-        if config.use_features:
-            # only take samples with ids == subset
-            subset_idxs = np.where(np.isin(test_data[:,2,0].numpy(), subset))[0]
-            test_data = test_data[subset_idxs, :]
-            # add dataset index to data
-            testset_idx = config.testsets.index(testset_path.split(".")[0].split("/")[-2])
-            testset_idxs = torch.ones(test_data.shape[0], 1, test_data.shape[2])*testset_idx
-            test_data = torch.cat([test_data, testset_idxs], dim=1)
-            # add backbone index to data
-            backbone_idx = config.test_backbones.index(testset_path.split("/")[-1].split('_')[1])
-            backbone_idxs = torch.ones(test_data.shape[0], 1, test_data.shape[2])*backbone_idx
-            test_data = torch.cat([test_data, backbone_idxs], dim=1)
-        else:
-            test_data = test_data[subset, :]
+        test_data = test_data[subset, :]
         test_data *= backbone_scale
         # gt_eval_dataset = torch.utils.data.TensorDataset(test_data)
         gt_eval_dataset = cnet_pose_dataset(test_data, datasets=config.testsets, 
@@ -193,10 +173,7 @@ def eval_gt(cnet, R_cnet, config,
             with torch.no_grad():
                 # get corrected pred, with adjusted cnet
                 cnet_in = backbone_pred
-                if config.use_features:
-                    corrected_pred, batch_corr_idxs = cnet(cnet_in, output.features, ret_corr_idxs=True)
-                else:
-                    corrected_pred, batch_corr_idxs = cnet(cnet_in, ret_corr_idxs=True)
+                corrected_pred, batch_corr_idxs = cnet(cnet_in, ret_corr_idxs=True)
                 
                 # Log attempted TTT samples if using energy threshold for TTT
                 if config.test_adapt and config.TTT_e_thresh:

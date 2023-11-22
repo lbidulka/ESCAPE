@@ -1,8 +1,3 @@
-"""uncertnet script for HybrIK"""
-import os
-import sys
-from pathlib import Path
-import pickle
 
 # path_root = Path(__file__)#.parents[3]
 # sys.path.append(str(path_root))
@@ -10,11 +5,6 @@ import pickle
 
 # print("\n", os.getcwd(), "\n", sys.path, "\n")
 
-# import optuna
-import json
-
-import numpy as np
-import torch
 from torchvision import transforms as T
 det_transform = T.Compose([T.ToTensor()])
 
@@ -22,11 +12,9 @@ from datasets.hybrik import load_hybrik, get_datasets, make_hybrik_pred_dataset
 from cnet.multi_distal import multi_distal
 from cnet.full_body import adapt_net
 from cnet.full_body_feats import adapt_net as adapt_net_feats
-from cnet.cotrain import CoTrainer
 from core.cnet_eval import eval_gt
 from config import get_config
 
-from utils.optuna_objectives import optuna_objective
 from utils.output_reporting import plot_TTT_loss, test_trainsets, plot_energies, print_test_summary
 
 
@@ -104,20 +92,19 @@ def main_worker(config):
             make_hybrik_pred_dataset(config, 'train')
         elif task == 'make_testset':
             make_hybrik_pred_dataset(config, 'test')
+        
         elif task == 'train_CNet':
             cnet.train()
         elif task == 'make_RCNet_trainset':
             cnet.write_train_preds()
         elif task == 'train_RCNet':
             R_cnet.train()
-        elif task == 'cotrain':
-            cotrainer = CoTrainer(cnet, R_cnet)
-            cotrainer.train()
 
         elif task == 'test':
             test(cnet, R_cnet, config)
         elif task == 'test_trainsets':
             test_trainsets(cnet, R_cnet, config,)
+
         elif task == 'plot_TTT_loss':
             plot_TTT_loss(config)
         elif task == 'plot_TTT_train_corr':
@@ -128,52 +115,10 @@ def main_worker(config):
         elif task == 'plot_train_energies':
             test_trainsets(cnet, R_cnet, config,)
             plot_energies(config, task='train')
+
         elif task == 'export_agora':
             test(cnet, R_cnet, config, agora_out=True)
 
-        elif task == 'optuna_CNet':
-            study = optuna.create_study(directions=['minimize', 'minimize'])
-            study.optimize(optuna_objective('CNet', config, cnet, R_cnet, test), n_trials=config.optuna_num_trials,)
-
-            print(f"Number of trials on the Pareto front: {len(study.best_trials)}")
-            trial_with_highest_mean = max(study.best_trials, key=lambda t: (t.values[0] + t.values[1])/2)
-            print(f"Trial with highest mean(PA-MPJPE, MPJPE): ")
-            print(f"\tnumber: {trial_with_highest_mean.number}")
-            print(f"\tparams: {trial_with_highest_mean.params}")
-            print(f"\tvalues: {trial_with_highest_mean.values}")
-            
-            log_json = {
-                "number": trial_with_highest_mean.number,
-                "params": trial_with_highest_mean.params,
-                "values": trial_with_highest_mean.values,
-            }
-            json.dump(log_json, open(config.optuna_log_path + 'CNet_best_mean_params.json', 'w'))
-            with open(config.optuna_log_path + 'CNet_study.pkl', 'wb') as file: 
-                pickle.dump(study, file)
-
-        elif task == 'optuna_TTT':
-            study = optuna.create_study(directions=['minimize', 'minimize'])
-            study.optimize(optuna_objective('TTT', config, cnet, R_cnet, test), n_trials=config.optuna_num_trials,)
-
-            print(f"Number of trials on the Pareto front: {len(study.best_trials)}")
-            trial_with_highest_mean = max(study.best_trials, key=lambda t: (t.values[0] + t.values[1])/2)
-            print(f"Trial with highest mean(PA-MPJPE, MPJPE): ")
-            print(f"\tnumber: {trial_with_highest_mean.number}")
-            print(f"\tparams: {trial_with_highest_mean.params}")
-            print(f"\tvalues: {trial_with_highest_mean.values}")
-            
-            log_json = {
-                "number": trial_with_highest_mean.number,
-                "params": trial_with_highest_mean.params,
-                "values": trial_with_highest_mean.values,
-            }
-            json.dump(log_json, open(config.optuna_log_path + 'TTT_best_mean_params.json', 'w'))
-            with open(config.optuna_log_path + 'TTT_study.pkl', 'wb') as file: 
-                pickle.dump(study, file)
-        
-        elif task == 'get_inference_time':
-            from utils.inference_timing import get_inference_time
-            get_inference_time(config, cnet, R_cnet)
         elif task == 'plot_E_sep':
             from utils.output_reporting import plot_E_sep
             for testset in config.testsets:
@@ -186,6 +131,10 @@ def main_worker(config):
                 plot_E_sep(config, task='test', dataset=testset, cnet=True)
             for trainset in config.trainsets:
                 plot_E_sep(config, task='train', dataset=trainset, cnet=True)
+                
+        elif task == 'get_inference_time':
+            from utils.inference_timing import get_inference_time
+            get_inference_time(config, cnet, R_cnet)
         else:
             raise NotImplementedError
     
