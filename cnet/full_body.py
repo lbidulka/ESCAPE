@@ -73,17 +73,8 @@ class adapt_net():
         out_pred = cnet_in.clone().detach()
 
         E_in = None
-        if self.config.use_cnet_energy and self.R == False:
-            E_in = self._energy(cnet_in - cnet_in[:,:1])
-            if self.config.energy_lower_thresh:
-                # dont correct samples with energy above threshold
-                dont_corr_idxs = E_in > self.config.energy_thresh
-            else:
-                dont_corr_idxs = torch.zeros(cnet_in.shape[0]).bool().to(self.device)
-            step_sizes = torch.ones_like(cnet_in[:,:1,0]) * self.config.corr_step_size
-        else:
-            dont_corr_idxs = torch.zeros(cnet_in.shape[0]).bool().to(self.device)
-            step_sizes = torch.ones_like(cnet_in[:,:1,0]) * self.config.corr_step_size
+        dont_corr_idxs = torch.zeros(cnet_in.shape[0]).bool().to(self.device)
+        step_sizes = torch.ones_like(cnet_in[:,:1,0]) * self.config.corr_step_size
         corr_idxs = ~dont_corr_idxs.cpu()
 
         # during TTT we might only have one sample, and so we can return if we dont need to do anything
@@ -319,17 +310,15 @@ class adapt_net():
                     backbone_pred = torch.bmm(i_rot.transpose(1,2), backbone_pred.transpose(1,2)).transpose(1,2)
                 # Loss 1
                 mse_loss = self._loss(backbone_pred, out, target_xyz_17)
-                loss = mse_loss
                 # Loss 2: Procrustes alignment loss, aligning backbones preds to targets
-                if self.config.PA_mse_loss:
-                    pa_backbone_pred = pose_processing.procrustes_torch(backbone_pred.detach().clone(), target_xyz_17.detach().clone(), 
-                                                                        use_kpts=self.config.EVAL_JOINTS, ret_np=False)
-                    inp = pa_backbone_pred[:,self.in_kpts].flatten(1)
-                    pa_out = self.cnet(inp)
-                    if self.loss_lam0 is None:
-                        self.loss_lam0, self.loss_lam1 = 1, 1
-                    pa_loss = self._loss(pa_backbone_pred, pa_out, target_xyz_17)
-                    loss = self.loss_lam0*mse_loss + self.loss_lam1*pa_loss
+                pa_backbone_pred = pose_processing.procrustes_torch(backbone_pred.detach().clone(), target_xyz_17.detach().clone(), 
+                                                                    use_kpts=self.config.EVAL_JOINTS, ret_np=False)
+                inp = pa_backbone_pred[:,self.in_kpts].flatten(1)
+                pa_out = self.cnet(inp)
+                if self.loss_lam0 is None:
+                    self.loss_lam0, self.loss_lam1 = 1, 1
+                pa_loss = self._loss(pa_backbone_pred, pa_out, target_xyz_17)
+                loss = self.loss_lam0*mse_loss + self.loss_lam1*pa_loss
                 loss.backward()
                 self.optimizer.step()
                 cnet_train_losses.append(loss.item())
@@ -367,17 +356,15 @@ class adapt_net():
                             backbone_pred = torch.bmm(i_rot.transpose(1,2), backbone_pred.transpose(1,2)).transpose(1,2)
                         # Loss 1
                         mse_loss = self._loss(backbone_pred, out, target_xyz_17)
-                        loss = mse_loss
                         # Loss 2: Procrustes alignment loss, aligning backbones preds to targets
-                        if self.config.PA_mse_loss:
-                            pa_backbone_pred = pose_processing.procrustes_torch(backbone_pred.detach().clone(), target_xyz_17.detach().clone(), 
-                                                                                use_kpts=self.config.EVAL_JOINTS, ret_np=False)
-                            inp = pa_backbone_pred[:,self.in_kpts].flatten(1)
-                            pa_out = self.cnet(inp)
-                            if self.loss_lam0 is None:
-                                self.loss_lam0, self.loss_lam1 = 1, 1
-                            pa_loss = self._loss(pa_backbone_pred, pa_out, target_xyz_17)
-                            loss = self.loss_lam0*mse_loss + self.loss_lam1*pa_loss
+                        pa_backbone_pred = pose_processing.procrustes_torch(backbone_pred.detach().clone(), target_xyz_17.detach().clone(), 
+                                                                            use_kpts=self.config.EVAL_JOINTS, ret_np=False)
+                        inp = pa_backbone_pred[:,self.in_kpts].flatten(1)
+                        pa_out = self.cnet(inp)
+                        if self.loss_lam0 is None:
+                            self.loss_lam0, self.loss_lam1 = 1, 1
+                        pa_loss = self._loss(pa_backbone_pred, pa_out, target_xyz_17)
+                        loss = self.loss_lam0*mse_loss + self.loss_lam1*pa_loss
                         cnet_val_losses.append(loss.item())
                 mean_val_loss = np.mean(cnet_val_losses)
             else:

@@ -1,4 +1,4 @@
-name: adap3d_clone
+name: escape_env
 channels:
   - pytorch
   - conda-forge

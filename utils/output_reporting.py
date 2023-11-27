@@ -17,7 +17,7 @@ def print_test_summary(config, all_summary):
         for backbone in summary.keys():
             print('-- {}: --'.format(backbone,), end=' ')
             for test in summary[backbone].keys():
-                if test in ['at V', 'at C'] and not config.use_cnet_energy:
+                if test in ['at V', 'at C']:
                     pass
                 else:
                     print('\n   {}:    '.format(test if test == 'vanilla' else ('   ' + test)), end=' ')

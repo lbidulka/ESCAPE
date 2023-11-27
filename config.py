@@ -39,11 +39,7 @@ def get_config():
     config.cnet_dataset_path = '/data/lbidulka/adapt_3d/'        # path to backbone predictions for datasets
     config.pose_datasets_path = '/data/lbidulka/pose_datasets/'  # path to raw datasets (images)
     
-    # What experiments to perform
-    config.tasks = ['train_CNet', 'test']
-    config.tasks = ['test']
-
-    # Possible Tasks/experiments
+    # All Possible Tasks/experiments
     # ------
     # gen_hybrik_trainsets, gen_hybrik_testset, train_CNet, make_RCNet_trainset, train_RCNet, 
     # test, test_trainsets, 
@@ -52,12 +48,16 @@ def get_config():
     # get_inference_time
     # -----
 
-    # ENERGY ---
-    config.use_cnet_energy = False         # use energy function to select OOD samples?
-    config.energy_lower_thresh = True      # don't correct samples too high energy?
-    config.energy_thresh = 800    #450     # dont correct samples with energy above this
-    config.E_thresh_cnet = 25    #450      # cnet pred E threshold
-    # ---
+    # What experiments to perform
+    config.tasks = ['test']
+
+    # What backbone to use
+    config.backone = 'pare' # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff',
+
+    # Test time adaptation and Energy-based sample selection
+    config.test_adapt = False              # test with test-time adaptation?
+    config.TTT_e_thresh = True            # use Energy function to select samples for adaptation? (adapt if below thresh)
+    config.energy_thresh = 800            # dont correct samples with energy above this
 
     # CNET ---
     config.cnet_align_root = True          # make CNet align root to pelvis of inputs?
@@ -66,16 +66,8 @@ def get_config():
 
     config.corr_steps = 1                  # How many correction iterations at inference?
     config.corr_step_size = 1              # base correction step size
-
-    # Fancy Training Options
-    config.PA_mse_loss = True              # use PA-MSE loss?
-
-    config.continue_train_CNet = False
-    config.continue_train_RCNet = False
      
     # Test time adaptation
-    config.test_adapt = True              # test with test-time adaptation?
-    config.TTT_e_thresh = True            # use Energy function to select samples for adaptation? (adapt if below thresh)
     config.TTT_loss = 'consistency'       # 'reproj_2d' 'consistency'
     if config.TTT_loss == 'reproj_2d':
         config.test_adapt_lr = 5e-4
@@ -86,14 +78,6 @@ def get_config():
         config.adapt_steps = 2 
         config.TTT_errscale = 1e2
 
-    # Data
-    config.train_backbones = ['bal_mse',] # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff', 
-    config.trainsets = ['MPii', 'HP3D',] # 'MPii', 'HP3D', 
-    config.trainsets_str = '_'.join(config.trainsets)
-    config.val_sets = []
-    config.test_backbones = config.train_backbones 
-    config.testsets = ['PW3D', 'HP3D',]
-
     # Other
     config.include_target_kpt_errs = False  # report individual target kpt erors?
     config.use_cnet = True                  # use CNet at test time?
@@ -102,6 +86,9 @@ def get_config():
     ######################################################################################
 
     config = config_data(config)
+
+    config.continue_train_CNet = False
+    config.continue_train_RCNet = False
     
     # Network inputs    
     config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
@@ -124,7 +111,15 @@ def config_data(config):
     '''
     Setup data paths and other data related config
     '''
-    config.test_eval_limit = 5_000   # limit test samples for debug
+    # Data
+    config.train_backbones = [config.backone]  
+    config.trainsets = ['MPii', 'HP3D',] # 'MPii', 'HP3D', 
+    config.trainsets_str = '_'.join(config.trainsets)
+    config.val_sets = []
+    config.test_backbones = config.train_backbones 
+    config.testsets = ['PW3D', 'HP3D',]
+
+    config.test_eval_limit = 120_000   # limit test samples for debug
     config.test_eval_subsets = {}
     for testset in config.testsets:
         if testset in ['PW3D', 'HP3D']:
