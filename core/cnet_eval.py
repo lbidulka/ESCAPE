@@ -129,7 +129,7 @@ def eval_gt(cnet, R_cnet, config,
                 corrected_pred, batch_corr_idxs = cnet(cnet_in, ret_corr_idxs=True)
                 
                 # Log attempted TTT samples if using energy threshold for TTT
-                if config.test_adapt and config.TTT_e_thresh:
+                if test_adapt and config.TTT_e_thresh:
                     corr_idxs.append(TTT_idxs.cpu().numpy())
                 else:
                     corr_idxs.append(batch_corr_idxs)

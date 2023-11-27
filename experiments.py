@@ -9,7 +9,6 @@ from torchvision import transforms as T
 det_transform = T.Compose([T.ToTensor()])
 
 from datasets.hybrik import make_hybrik_pred_dataset
-from cnet.multi_distal import multi_distal
 from cnet.full_body import adapt_net
 from core.cnet_eval import eval_gt
 from config import get_config
@@ -54,23 +53,19 @@ def test(cnet, R_cnet, config, print_summary=True):
 
 def setup_adapt_nets(config):
     ''' Define the adaptation networks CNet and RCNet '''
-    if config.use_multi_distal:
-        cnet = multi_distal(config)
-        R_cnet = None # TODO: MULTI-DISTAL R-CNET
-    else:
-        cnet = adapt_net(config, target_kpts=config.cnet_targets,
-                        in_kpts=config.EVAL_JOINTS)
-        R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
-                        R=True,
-                        in_kpts=config.EVAL_JOINTS)
+    cnet = adapt_net(config, target_kpts=config.cnet_targets,
+                    in_kpts=config.EVAL_JOINTS)
+    R_cnet = adapt_net(config, target_kpts=config.rcnet_targets,
+                    R=True,
+                    in_kpts=config.EVAL_JOINTS)
     return cnet, R_cnet
 
 def main_worker(config): 
     cnet, R_cnet = setup_adapt_nets(config)
     for task in config.tasks:
-        if task == 'make_trainsets':
+        if task == 'gen_hybrik_trainsets':
             make_hybrik_pred_dataset(config, 'train')
-        elif task == 'make_testset':
+        elif task == 'gen_hybrik_testset':
             make_hybrik_pred_dataset(config, 'test')
         
         elif task == 'train_CNet':

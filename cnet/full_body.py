@@ -31,13 +31,9 @@ class adapt_net():
             self.config.ckpt_name += '_rcnet'
         else:
             self.config.ckpt_name += '_cnet'
-        if self.config.use_multi_distal:
-            self.config.ckpt_name += '_md.pth'
-        else:
-            self.config.ckpt_name += '_all.pth'
+        self.config.ckpt_name += '_all.pth'
 
-        if len(self.config.train_backbones) == 1:
-            self.config.ckpt_name = self.config.train_backbones[0] + self.config.ckpt_name
+        self.config.ckpt_name = self.config.train_backbones[0] + self.config.ckpt_name
 
         # Kpt definition
         self.in_kpts = in_kpts

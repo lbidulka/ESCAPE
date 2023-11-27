@@ -31,45 +31,26 @@ def get_config():
     config.seed = np.random.randint(0, 1000)
     np.random.seed(config.seed) # For test set random slice
 
-    # Tasks
-    # config.tasks = ['make_testset']
-    # config.tasks = ['make_trainsets', 'make_testset', 
-    #                 'train_CNet', 'make_RCNet_trainset', 'train_RCNet',
-    #                 'test', 'plot_TTT_loss'] 
-    # config.tasks = ['train_CNet', 'make_RCNet_trainset', 
-    #                 'train_RCNet', 'test', 'plot_TTT_loss']
-    # config.tasks = ['test', 'train_CNet', 'test']
-    # config.tasks = ['pretrain_CNet']
-    # config.tasks = ['pretrain_RCNet']
+    ######################################################################################
+    ######################################################################################
+
+    # Main paths
+    config.cnet_ckpt_path = '../../ckpts/'                       # path to save/load correction net ckpts
+    config.cnet_dataset_path = '/data/lbidulka/adapt_3d/'        # path to backbone predictions for datasets
+    config.pose_datasets_path = '/data/lbidulka/pose_datasets/'  # path to raw datasets (images)
     
-    # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
-    # config.tasks = ['train_CNet', 'test']
-    # config.tasks = ['train_CNet', 'make_RCNet_trainset', 'train_RCNet', 'test']
+    # What experiments to perform
     config.tasks = ['train_CNet', 'test']
-
-    # config.tasks = ['test']
-    # config.tasks = ['test', 'plot_test_energies']
-    # config.tasks = ['plot_test_energies']
-    # config.tasks = ['plot_train_energies']
-
-    # config.tasks = ['make_RCNet_trainset', 'train_RCNet']#, 'test',]# 'plot_TTT_loss', 'plot_TTT_train_corr']
-    # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss',] # 'plot_TTT_train_corr']
-    # config.tasks = ['test', 'plot_E_sep',] # plot_TTT_loss, plot_E_sep
-
-    # config.tasks = ['optuna_CNet', 'optuna_TTT']
-
-    # config.tasks = ['test', 'plot_TTT_loss']
-    # config.tasks = ['plot_TTT_loss']
-    # config.tasks = ['plot_E_sep'] # plot_E_sep, plot_E_sep_cnet, get_inference_time 
-    # config.tasks = ['test', 'test_trainsets', 'plot_E_sep']
     config.tasks = ['test']
-    # config.tasks = ['make_testset']
- 
-    # Main Settings
-    config.print_config = False
-    config.err_binned_results = True
-    config.include_target_kpt_errs = False  # report individual target kpt erors?
-    config.use_cnet = True
+
+    # Possible Tasks/experiments
+    # ------
+    # gen_hybrik_trainsets, gen_hybrik_testset, train_CNet, make_RCNet_trainset, train_RCNet, 
+    # test, test_trainsets, 
+    # plot_TTT_loss, plot_TTT_train_corr, plot_test_energies, plot_train_energies, 
+    # plot_E_sep, plot_E_sep_cnet, 
+    # get_inference_time
+    # -----
 
     # ENERGY ---
     config.use_cnet_energy = False         # use energy function to select OOD samples?
@@ -92,38 +73,58 @@ def get_config():
     config.continue_train_CNet = False
     config.continue_train_RCNet = False
      
-    # TTT
-    config.test_adapt = False
-    config.TTT_e_thresh = True      # only apply TTT to samples with samples below energy thresh?
-    config.TTT_loss = 'consistency' # 'reproj_2d' 'consistency'
+    # Test time adaptation
+    config.test_adapt = True              # test with test-time adaptation?
+    config.TTT_e_thresh = True            # use Energy function to select samples for adaptation? (adapt if below thresh)
+    config.TTT_loss = 'consistency'       # 'reproj_2d' 'consistency'
     if config.TTT_loss == 'reproj_2d':
         config.test_adapt_lr = 5e-4
-        config.adapt_steps = 5 #2
+        config.adapt_steps = 5
         config.TTT_errscale = 1e2
     if config.TTT_loss == 'consistency':        
-        config.test_adapt_lr = 5e-4 # 5e-4
-        config.adapt_steps = 2 if config.TTT_e_thresh else 1
-
+        config.test_adapt_lr = 5e-4
+        config.adapt_steps = 2 
         config.TTT_errscale = 1e2
 
-    # DATA
+    # Data
     config.train_backbones = ['bal_mse',] # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff', 
-
     config.trainsets = ['MPii', 'HP3D',] # 'MPii', 'HP3D', 
     config.trainsets_str = '_'.join(config.trainsets)
-
-    # config.val_sets = {'MPii': 'cliff', 
-    #                    'HP3D': 'cliff',}
     config.val_sets = []
+    config.test_backbones = config.train_backbones 
+    config.testsets = ['PW3D', 'HP3D',]
+
+    # Other
+    config.include_target_kpt_errs = False  # report individual target kpt erors?
+    config.use_cnet = True                  # use CNet at test time?
+
+    ######################################################################################
+    ######################################################################################
+
+    config = config_data(config)
     
-    config.test_backbones = config.train_backbones #['hybrik',] # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff', 
+    # Network inputs    
+    config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
+    config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
+    config.cnet_targets = config.distal_kpts
+    # get all the entries in the dict, make a combined list
+    config.rcnet_targets_name = ['Hips', 'Shoulders']
+    config.rcnet_targets = []
+    for name in config.rcnet_targets_name:
+        config.rcnet_targets += RCNET_TARGET_NAMES[name]
 
-    config.testsets = ['PW3D', 'HP3D', ]
-    # config.testsets = ['PW3D',]
-    # config.testsets = ['HP3D',]
+    # CUDA
+    config.device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    torch.backends.cudnn.enabled = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+    return config
 
-
-    config.test_eval_limit = 120_000 # 50_000    For debugging cnet testing (3DPW has 35515 test samples)
+def config_data(config):
+    '''
+    Setup data paths and other data related config
+    '''
+    config.test_eval_limit = 5_000   # limit test samples for debug
     config.test_eval_subsets = {}
     for testset in config.testsets:
         if testset in ['PW3D', 'HP3D']:
@@ -148,11 +149,6 @@ def get_config():
         'bal_mse': 1.0,
     }
     config.mmlab_backbones = ['spin', 'pare', 'cliff', 'bal_mse']
-
-    # Main base baths
-    config.cnet_ckpt_path = '../../ckpts/'
-    config.cnet_dataset_path = '/data/lbidulka/adapt_3d/'
-    config.pose_datasets_path = '/data/lbidulka/pose_datasets/'
 
     # trainsets
     config.backbone_trainset_lims = {
@@ -230,46 +226,5 @@ def get_config():
                                         'scales': cnet_testset_scales,
                                         'backbones': cnet_testset_backbones,
                                         }
-    
-    # Network inputs
-    config.use_multi_distal = False  # Indiv. nets for each limb + distal pred
-    config.limbs = ['LA', 'RA', 'LL', 'RL'] # 'LL', 'RL', 'LA', 'RA'    limbs for multi_distal net
-    
-    config.proximal_kpts = [1, 4, 11, 14,] # LHip, RHip, LShoulder, RShoulder
-    config.distal_kpts = [3, 6, 13, 16,]  # LAnkle, RAnkle, LWrist, RWrist
-    config.cnet_targets = config.distal_kpts
-    # get all the entries in the dict, make a combined list
-    config.rcnet_targets_name = ['Hips', 'Shoulders']
-    config.rcnet_targets = []
-    for name in config.rcnet_targets_name:
-        config.rcnet_targets += RCNET_TARGET_NAMES[name]
 
-    # CUDA
-    config.device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
-    torch.backends.cudnn.enabled = True
-    torch.backends.cudnn.allow_tf32 = True
-    torch.backends.cudnn.benchmark = True
-    if config.print_config: print_useful_configs(config)
     return config
-
-def print_useful_configs(config):
-    print('\n ----- CONFIG: -----')
-    print(' -------------------')
-    print('hybrIK_version: {}'.format(config.hybrIK_version))
-    print('Tasks: {}'.format(config.tasks))
-    print(' --- CNet: ---')
-    print('Use CNet: {}'.format(config.use_cnet))
-    print('Corr Steps: {}'.format(config.corr_steps))
-    print('Corr Step Size: {}'.format(config.corr_step_size))
-    print('Test Adapt: {}'.format(config.test_adapt))
-    print('Test Adapt LR: {}'.format(config.test_adapt_lr))
-    print('Adapt Steps: {}'.format(config.adapt_steps)) 
-    print('TTT Loss: {}'.format(config.TTT_loss))
-    print('Split Corr Dim Trick: {}'.format(config.split_corr_dim_trick))
-    print(' --- Data: ---')
-    print('Trainsets: {}'.format(config.trainsets))
-    print('Testsets: {}'.format(config.testsets))
-    # print('Trainset paths: {}'.format(config.cnet_trainset_paths))
-    # print('Testset paths: {}'.format(config.cnet_testset_paths))
-    print(' ----------------- \n') 
-    return
