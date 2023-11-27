@@ -468,7 +468,7 @@ def main():
             top_preds = top_corr_data[2]
             top_corrs = top_corr_data[3]
 
-            top_img_idxs = [32104, ] # 24731, 25866, 23742
+            top_img_idxs = [11853] # 24731, 25866, 23742,    32104, 26844, 4345, 31166, 32119
 
             gt_smpl_params, gts, img_paths, bbxs, cams = dataset.dataset.get_gts_paths_bbxs_cams(top_img_idxs)
             

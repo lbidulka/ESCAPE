@@ -1,6 +1,4 @@
-import torch
 import numpy as np
-
 import utils.pose_processing as pose_processing
 
 def get_PA_MPJPE(preds, gts, config):
@@ -57,10 +55,6 @@ def get_P1_P2(backbone_preds, corr_preds, gts,
         att_corr_pa_mpjpe = corr_pa_mpjpe[corr_idxs].mean()
         att_corr_mpjpe = corr_mpjpe[corr_idxs].mean()
         att_corr_err = corr_err[corr_idxs].mean(0)
-
-        # att_rel_pa_mpjpe = att_corr_pa_mpjpe - att_bb_pa_mpjpe
-        # att_rel_mpjpe = att_corr_mpjpe - att_bb_mpjpe
-        # att_rel_err = att_corr_err - att_backbone_err
 
     corr_pa_mpjpe_all = corr_pa_mpjpe.mean()
     corr_mpjpe_all = corr_mpjpe.mean()

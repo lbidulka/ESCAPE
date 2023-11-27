@@ -44,7 +44,8 @@ def get_config():
     
     # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test', 'plot_TTT_loss']
     # config.tasks = ['train_CNet', 'test']
-    config.tasks = ['train_CNet', 'make_RCNet_trainset', 'train_RCNet', 'test']
+    # config.tasks = ['train_CNet', 'make_RCNet_trainset', 'train_RCNet', 'test']
+    config.tasks = ['train_CNet', 'test']
 
     # config.tasks = ['test']
     # config.tasks = ['test', 'plot_test_energies']
@@ -57,8 +58,6 @@ def get_config():
 
     # config.tasks = ['optuna_CNet', 'optuna_TTT']
 
-    # config.tasks = ['cotrain', 'test',]# 'plot_TTT_loss']
-
     # config.tasks = ['test', 'plot_TTT_loss']
     # config.tasks = ['plot_TTT_loss']
     # config.tasks = ['plot_E_sep'] # plot_E_sep, plot_E_sep_cnet, get_inference_time 
@@ -67,38 +66,28 @@ def get_config():
     # config.tasks = ['make_testset']
  
     # Main Settings
-    config.optuna_num_trials = 1
     config.print_config = False
     config.err_binned_results = True
     config.include_target_kpt_errs = False  # report individual target kpt erors?
     config.use_cnet = True
 
     # ENERGY ---
-    config.use_cnet_energy = False     # use energy function to select OOD samples?
-    config.energy_lower_thresh = True    # don't correct samples too high energy?
-    config.energy_thresh = 800    #450    # dont correct samples with energy above this
-    config.E_thresh_cnet = 25    #450    # cnet pred E threshold
-    config.energy_scaled_corr = False  # scale the correction step size by energy?
-
-    config.reverse_thresh = False      # reverse the energy thresholding? (correct if above thresh)
+    config.use_cnet_energy = False         # use energy function to select OOD samples?
+    config.energy_lower_thresh = True      # don't correct samples too high energy?
+    config.energy_thresh = 800    #450     # dont correct samples with energy above this
+    config.E_thresh_cnet = 25    #450      # cnet pred E threshold
     # ---
 
     # CNET ---
-    config.cnet_align_root = True # make CNet align root to pelvis of inputs?
-    config.pred_errs = True  # True: predict distal joint errors, False: predict 3d-joints directly
-    
-    config.cnet_dont_corr_dims = [] #[0,1] #[0,2]  # which dims to not correct with CNet at all
-    config.cnet_dont_Escale_dims = [] #[0,1] #[0,2]  # which dims to not scale steps with E
-    # config.split_corr_dim_trick = False
-    config.split_corr_dims = []  # [0,2] # which dims to not correct with TTT tuned CNet
+    config.cnet_align_root = True          # make CNet align root to pelvis of inputs?
+    config.zero_orientation = False        # zero out the orientation of CNet inputs?
+    config.cnet_unit_inscale = False       # scale CNet/RCNet input poses to L2(pose) = 1?
 
-    config.corr_steps = 1   # How many correction iterations at inference?
-    config.corr_step_size = 1 # base correction step size
+    config.corr_steps = 1                  # How many correction iterations at inference?
+    config.corr_step_size = 1              # base correction step size
 
     # Fancy Training Options
-    config.PA_mse_loss = True           # use PA-MSE loss?
-    config.zero_orientation = True     # zero out the orientation of CNet inputs?
-    config.cotrain = True if 'cotrain' in config.tasks else False
+    config.PA_mse_loss = True              # use PA-MSE loss?
 
     config.continue_train_CNet = False
     config.continue_train_RCNet = False
@@ -118,7 +107,7 @@ def get_config():
         config.TTT_errscale = 1e2
 
     # DATA
-    config.train_backbones = ['pare',] # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff', 
+    config.train_backbones = ['bal_mse',] # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff', 
 
     config.trainsets = ['MPii', 'HP3D',] # 'MPii', 'HP3D', 
     config.trainsets_str = '_'.join(config.trainsets)
@@ -127,7 +116,7 @@ def get_config():
     #                    'HP3D': 'cliff',}
     config.val_sets = []
     
-    config.test_backbones = ['pare',] # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff', 
+    config.test_backbones = config.train_backbones #['hybrik',] # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff', 
 
     config.testsets = ['PW3D', 'HP3D', ]
     # config.testsets = ['PW3D',]

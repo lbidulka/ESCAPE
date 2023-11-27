@@ -2,18 +2,11 @@ import torch
 import numpy as np
 from types import SimpleNamespace
 from tqdm import tqdm
-import torch.nn as nn
-import os
-
-# import mmpose.apis
-# import mmpose.utils
 
 import utils.errors as errors
-import utils.pose_processing as pose_processing
-import utils.quick_plot
-from core.cnet_dataset import cnet_pose_dataset, hflip_keypoints
+from core.cnet_dataset import cnet_pose_dataset
 
-from core import cnet_data, metrics
+from core import metrics
 
 
 def cnet_TTT_loss(config, backbone_pred, Rcnet_pred, corrected_pred, poses_2d,):
@@ -93,12 +86,9 @@ def eval_gt(cnet, R_cnet, config,
         output, labels, img_ids, poses_2d = unpack_test_data(data, config)
         backbone_pred = output.pred_xyz_jts_17.reshape(output.pred_xyz_jts_17.shape[0], -1, 3)
         if config.use_cnet:
-            corrected_pred_init = None            
-            
             # Only do TTT if sample is hard sample
-            if config.test_adapt and config.TTT_e_thresh:
+            if test_adapt and config.TTT_e_thresh:
                 # dont correct samples with energy above threshold
-                # E = cnet._energy(backbone_pred.detach().clone())
                 E = cnet._energy(backbone_pred - backbone_pred[:,:1])
                 dont_TTT_idxs = E > config.energy_thresh
                 TTT_idxs = ~dont_TTT_idxs
@@ -109,19 +99,13 @@ def eval_gt(cnet, R_cnet, config,
             if test_adapt and TTT_e_thresh_condition:
                 # THIS IS SUPER INNEFICIENT, AND WASTES MY TIME :(
                 cnet.load_cnets(print_str=False)
-                if len(config.split_corr_dims) > 0:
-                    cnet.cnet.eval()
-                    corrected_pred_init = cnet(backbone_pred.detach().clone())
                 cnet.cnet.train()
-                # Setup Optimizer
                 cnet.cnet.apply(set_bn_eval)
-                optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, cnet.cnet.parameters()),
-                                                lr=config.test_adapt_lr)
+                optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, cnet.cnet.parameters()), lr=config.test_adapt_lr)
                 cnet_in = backbone_pred.detach().clone()
                 for i in range(config.adapt_steps):
                     optimizer.zero_grad()
                     corrected_pred, corr_idx = cnet(cnet_in, ret_corr_idxs=True,)
-
                     # only do TTT if there are some corrected samples
                     if corr_idx.sum() > 0:
                         Rcnet_pred = R_cnet(corrected_pred)
@@ -149,17 +133,6 @@ def eval_gt(cnet, R_cnet, config,
                     corr_idxs.append(TTT_idxs.cpu().numpy())
                 else:
                     corr_idxs.append(batch_corr_idxs)
-
-                # Only correct specified CNet corr dims
-                if len(config.cnet_dont_corr_dims) > 0:
-                    corrected_pred_init = backbone_pred.detach().clone()
-                    corrected_pred[:, :, config.cnet_dont_corr_dims] = corrected_pred_init[:, :, config.cnet_dont_corr_dims]
-                # Only use TTT improved preds for specified dims
-                if len(config.split_corr_dims) > 0:
-                    if corrected_pred_init is None:
-                        corrected_pred_init = backbone_pred.detach().clone()
-
-                    corrected_pred[:, :, config.split_corr_dims] = corrected_pred_init[:, :, config.split_corr_dims]
 
             corrected_pred = corrected_pred.reshape(labels['target_xyz_17'].shape[0], -1)
             output.pred_xyz_jts_17 = corrected_pred
@@ -233,28 +206,6 @@ def eval_gt(cnet, R_cnet, config,
     backbone_name = testset_path.split('/')[-1].split('.')[-2]
     energies_outpath +=  '_'.join([backbone_name, 'energies_cnet.npy'])
     np.save(energies_outpath, energies_losses)
-    
-    # get top corrections for qualitative investigation
-    top_img_ids, top_gts, top_preds, top_corrs = metrics.get_top_corr(backbone_preds, corr_preds, gts, 
-                                                           img_idxs, config.cnet_targets, n=50)
-    
-    # if dataset_name == 'PW3D':
-    #     # add specific img id to the top corrections
-    #     # want to add sample with img id = 22408
-    #     idx_22408 = np.where(img_idxs == 22408)[0][0]
-    #     top_img_ids = np.concatenate([np.array([22408])[None,:], top_img_ids])
-    #     top_gts = np.concatenate([gts[idx_22408:idx_22408+1], top_gts])
-    #     top_preds = np.concatenate([backbone_preds[idx_22408:idx_22408+1], top_preds])
-    #     top_corrs = np.concatenate([corr_preds[idx_22408:idx_22408+1], top_corrs])
-
-    # save top corrections
-    top_corr_outpath = '../../outputs/qualitative/'
-    top_corr_outpath += dataset_name + '_'
-    top_corr_outpath +=  '_'.join([backbone_name, 'top_corr.npy'])
-    top_qual_info = np.array([np.ones_like(top_gts)*top_img_ids.reshape(-1,1,1), 
-                              top_gts, top_preds, top_corrs])
-    np.save(top_corr_outpath, top_qual_info)
-
 
     # get metrics
     num_tails = [
