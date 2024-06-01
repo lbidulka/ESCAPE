@@ -27,6 +27,8 @@ import mmhuman3d.core.cameras as mm_cams
 import numpy as np
 from types import SimpleNamespace
 
+import utils.mmlab_varying_conditions as mmlab_vc
+from core.metrics import get_PA_MPJPE
 
 def get_config(args, ):
     config = SimpleNamespace()
@@ -42,13 +44,49 @@ def get_config(args, ):
     # config.tasks = ['gen_preds', 'gen_cnet_feats',]
     # config.tasks = ['gen_cnet_data']
     # config.tasks = ['get_inference_time']
-    config.tasks = ['get_qualitative_results']
+    # config.tasks = ['get_qualitative_results']
+    config.tasks = ['get_varying_conditions_miniset']   # get_varying_conditions_miniset, get_varying_conditions, visualize_varying_conditions
     config.save_preds = True    # Save the generated preds?
+
+    config.variation_type = 'darkening'    # occlusion, darkening
+    config.variation_darkening_alpha = 0.1  # what fraction of raw img to keep, mixed with black
+    config.variation_plot_raw = True      # if True, output the raw img plots, else output the varying condition (aug) plots
+    config.variation_top_img_idxs = { 
+        'PW3D': 
+                # Worst Cnet
+                [29000, 32746, 2620, 3163, 2966,  
+                 22481,  12120, 16181, 4606, 20253,
+                 7031, 5804, 19750, 30116, 28069, 3352,
+                 13552, 21284, 33710, 26749, 10585
+                 ]
+                
+                # Varying
+                # [5392, 5842,  30053, 29994,  5,  34268, 21783, 13231, 24375, 19679, 11239]
+                # [5385, 31051, 2162, 4153, 8149]
+                # [5385, 21007, 31360, 19037, 14454, 
+                # 19006, 31051, 20327, 15184, 6817, 
+                # 24949, 29978, 2162, 15166, 24974, 
+                # 29541, 2018, 32225, 31357, 7822, 
+                # 4153, 8149]
+                # [4153, 8149]
+                #7, 
+                # 11196, 34278, 24948, 
+                # 21003, 5860, 13399, 35270,
+                # 4853, 8149,]
+
+                
+                # 29551, 24046, , , 14342,
+                # 16975,  , 15136, 24964,  4878,  , 
+                # 24997, 21775, 15186,  2004, 13295,  5388,
+                # 32059, 33431, 15209,  30527, 25660,
+                # 13249,  8607, 15193,  6807, 13472, 13371,
+                # 24490,  6793, 25591]
+    }
 
     # Backbone generation settings
     config.backbone = 'pare'  # 'spin' 'pare' 'cliff' 'bal_mse' 'hybrik'
-    config.dataset = 'PW3D' # 'PW3D' 'MPii' 'HP3D_train' 'HP3D_test' 'coco' 
-    config.subset_len = 120_000 # hp3d: 110k, pwd3d: 35k, mpii: 14810, coco2017: 40055
+    config.dataset = 'PW3D' # 'PW3D' 'MPii' 'HP3D_train' 'HP3D_test' 'coco', h36m
+    config.subset_len = 325_000 # hp3d: 110k, pwd3d: 35k, mpii: 14810, coco2017: 40055, h36m: 313k ????
     set_model_and_data_config(config)
 
     # Paths
@@ -95,6 +133,8 @@ def set_model_and_data_config(config):
             config.eval_data = 'hp3d_eval'
         elif config.dataset == 'HP3D_test':
             config.eval_data = 'hp3d_test_eval'
+        elif config.dataset == 'h36m':
+            config.eval_data = 'h36m_eval'
         else:
             raise NotImplementedError
     # Cliff
@@ -110,6 +150,8 @@ def set_model_and_data_config(config):
             config.eval_data = 'hp3d_test_eval'
         elif config.dataset == 'MPii':
             config.eval_data = 'mpii_eval'
+        elif config.dataset == 'h36m':
+            config.eval_data = 'h36m_eval'
         else: 
             raise NotImplementedError
     # Pare
@@ -125,6 +167,8 @@ def set_model_and_data_config(config):
             config.eval_data = 'hp3d_test_eval'
         elif config.dataset == 'MPii':
             config.eval_data = 'mpii_eval'
+        elif config.dataset == 'h36m':
+            config.eval_data = 'h36m_eval'
         else: 
             raise NotImplementedError
     # Balanced MSE
@@ -140,6 +184,8 @@ def set_model_and_data_config(config):
             config.eval_data = 'hp3d_test_eval'
         elif config.dataset == 'MPii':
             config.eval_data = 'mpii_eval'
+        elif config.dataset == 'h36m':
+            config.eval_data = 'h36m_eval'
         else: 
             raise NotImplementedError
     else:
@@ -246,7 +292,7 @@ def get_inference_time(config, eval_data):
     print("Measuring...")
     # MEASURE PERFORMANCE
     with torch.no_grad():
-        for rep in range(repetitions):
+        for rep in tqdm(range(repetitions)):
             starter.record()
             _ = model(return_loss=False, **sample)
             ender.record()
@@ -271,7 +317,7 @@ def gen_preds(config, cfg, dataset, data_loader,
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
         wrap_fp16_model(model)
-    load_checkpoint(model, args.checkpoint, map_location='cpu')
+    load_checkpoint(model, args.checkpoint, map_location=args.device)
 
     # Get preds
     if args.device == 'cpu':
@@ -377,41 +423,16 @@ def main():
             # np.save(out_path, np.array([features, img_idss,]))
         elif task == 'get_inference_time':
             get_inference_time(config, config.eval_data)
-        elif task == 'get_qualitative_results':
+        elif task in ['get_qualitative_results', 'visualize_varying_conditions']:
             # scale and translate to fit bbx
             def proj_and_scale(gts, preds, corrs, boxes, cams):
                 ''' '''
-                # # Real 2D img projection (NOT WORKING PROPERLY, CAMERA ISSUE?)
-                # proj_gts = np.zeros_like(gts[..., :2])
-                # proj_preds = np.zeros_like(preds[..., :2])
-                # proj_corrs = np.zeros_like(corrs[..., :2])
-                # for i, (gt, pred, corr) in enumerate(zip(gts, preds, corrs)):
-                #     cam = mm_cams.build_cameras(
-                #             dict(
-                #                 type='PerspectiveCameras',
-                #                 K=np.array(cams[i]['in_mat']),
-                #                 R=np.array(cams[i]['rotation_mat']),
-                #                 T=np.array(cams[i]['translation']),
-                #                 in_ndc=False,
-                #                 image_size=(cams[i]['H'], cams[i]['W']),
-                #                 convention='pytorch3d',
-                #                 ))
 
-                #     proj_gts[i] = cam.transform_points_screen(points=torch.tensor(gt))[...,:2]
-                #     proj_preds[i] = cam.transform_points_screen(points=torch.tensor(pred))[...,:2]
-                #     proj_corrs[i] = cam.transform_points_screen(points=torch.tensor(corr))[...,:2]
-                # return proj_gts.astype(int), proj_preds.astype(int), proj_corrs.astype(int)
-
+                # if cams is None:
                 # project to 2d
                 proj_gts = gts[..., :2] 
                 proj_preds = preds[..., :2]
                 proj_corrs = corrs[..., :2]
-                # TEMP: DEAL W/ HIP OFFSET UNTIL I FIGURE OUT HOW TO DO IT PROPERLY
-                # gt will be centred, preds and corrs will be shifted relative to gt
-                # pred_shift = preds[:,0] - gts[:,0]
-                # proj_gts -= proj_gts[:,0:1,:] 
-                # proj_preds -= proj_gts[:,0:1,:]  #pred_shift[:,None,:2] # proj_preds[:,0:1,:]
-                # proj_corrs -= proj_gts[:,0:1,:] #pred_shift[:,None,:2]
 
                 # get scales & translations using gts
                 scales = np.zeros((len(proj_gts), 2))
@@ -434,6 +455,15 @@ def main():
                 t_gts = proj_gts * scales + translations 
                 t_preds = proj_preds * scales + translations
                 t_corrs = proj_corrs * scales + translations
+                # else:
+                    # # project to 2d using camera
+                    # resolutions = torch.tensor([(cam['H'], cam['W']) for cam in cams])
+                    # Ks = torch.tensor([cam['in_mat'] for cam in cams])
+                    # Rs = torch.tensor([cam['rotation_mat'] for cam in cams])
+                    # Ts = torch.tensor([cam['translation'] for cam in cams])
+                    # t_gts = mm_cam_utils.project_points(gts, resolution=resolutions, K=Ks, R=Rs, T=Ts)[...,:2]
+                    # t_preds = mm_cam_utils.project_points(preds, resolution=resolutions, K=Ks, R=Rs, T=Ts)[...,:2]
+                    # t_corrs = mm_cam_utils.project_points(corrs, resolution=resolutions, K=Ks, R=Rs, T=Ts)[...,:2]
 
                 return t_gts.astype(int), t_preds.astype(int), t_corrs.astype(int)
 
@@ -455,55 +485,100 @@ def main():
                 'rarm': [8, 14, 15, 16],
             }
 
-            # load the top corrections from CNet framework and find the matching img_ids in the dataset
-            qualitative_outpath = '../../outputs/qualitative'
-            top_corr_path = '{}/{}_mmlab_{}_test_top_corr.npy'.format(qualitative_outpath, config.dataset, config.backbone)
-            if config.dataset == 'HP3D_test':
-                top_corr_path = top_corr_path.replace('HP3D_test', 'HP3D')
-            if config.backbone == 'hybrik':
-                top_corr_path = top_corr_path.replace('mmlab_', 'hrw48_wo_3dpw_cnet_')
-            top_corr_data = np.load(top_corr_path)
-            top_img_idxs = top_corr_data[0][:,0,0].astype(int)
-            top_gts = top_corr_data[1]
-            top_preds = top_corr_data[2]
-            top_corrs = top_corr_data[3]
+            def get_mpjpe(preds, gts, 
+                          eval_joints=[6, 5, 4, 1, 2, 
+                                       3, 16, 15, 14, 11, 
+                                       12, 13, 8, 10]):
+                ''' '''
+                return np.sqrt(np.sum((preds[eval_joints]*1000 - gts[eval_joints]*1000)**2, axis=1).mean())
+            
+            def get_energy(pose):
+                '''
+                '''
+                return torch.logsumexp(torch.tensor(pose.reshape(-1) * 1000), dim=-1).item()
 
-            top_img_idxs = [11853] # 24731, 25866, 23742,    32104, 26844, 4345, 31166, 32119
+
+            if task == 'get_qualitative_results':
+                # load the top corrections from CNet framework and find the matching img_ids in the dataset
+                qualitative_outpath = '../../outputs/qualitative'
+                top_corr_path = '{}/{}_mmlab_{}_test_top_corr.npy'.format(qualitative_outpath, config.dataset, config.backbone)
+                if config.dataset == 'HP3D_test':
+                    top_corr_path = top_corr_path.replace('HP3D_test', 'HP3D')
+                if config.backbone == 'hybrik':
+                    top_corr_path = top_corr_path.replace('mmlab_', 'hrw48_wo_3dpw_cnet_')
+                top_corr_data = np.load(top_corr_path)
+                top_img_idxs = top_corr_data[0][:,0,0].astype(int)
+                top_gts = top_corr_data[1]
+                top_preds = top_corr_data[2]
+                top_corrs = top_corr_data[3]
+                
+                top_corrs_noTTA = None
+
+                top_img_idxs = [11853] # 24731, 25866, 23742,    32104, 26844, 4345, 31166, 32119
+            elif task == 'visualize_varying_conditions':
+                # load the top corrections from CNet framework and find the matching img_ids in the dataset
+                qualitative_outpath = '../../outputs/qualitative/varying_conditions'
+                top_corr_varying_path = '{}/{}_mmlab_{}_test_top_corr_varying_conditions.npy'.format(qualitative_outpath, config.dataset, config.backbone)
+                top_corr_path = '{}/{}_mmlab_{}_test_top_corr.npy'.format(qualitative_outpath, config.dataset, config.backbone)
+                if config.dataset != 'PW3D':
+                    raise NotImplementedError
+                top_corr_data = np.load(top_corr_path)
+                top_corr_varying_data = np.load(top_corr_varying_path)
+
+                top_img_idxs = top_corr_data[0][:,0,0].astype(int)
+
+                # HARDCODE
+                eval_joints_pw3d = [6, 5, 4, 1, 2, 3, 16, 15, 14, 11, 12, 13, 8, 10]
+                top_img_idxs = config.variation_top_img_idxs[config.dataset]
+                plot_raw = config.variation_plot_raw    # if True, output the raw img plots, else output the varying condition (aug) plots
+                
+                if plot_raw:
+                    top_gts = top_corr_data[1]
+                    top_preds = top_corr_data[2]
+                    top_corrs_noTTA = top_corr_data[3]
+                    top_corrs = top_corr_data[4]
+                else:
+                    top_gts = top_corr_varying_data[1]
+                    top_preds = top_corr_varying_data[2]
+                    top_corrs_noTTA = top_corr_varying_data[3]
+                    top_corrs = top_corr_varying_data[4]
+                
+                for i, idx in enumerate(top_img_idxs):
+                    # compute MPJPE, PA-MPJPE and Energy for the original and varying conditions. then print out
+                    gt = top_gts[i]
+                    
+                    bb_mpjpe_raw = get_mpjpe(top_corr_data[2][i], gt)
+                    bb_pa_mpjpe_raw = get_PA_MPJPE(top_corr_data[2][i:i+1,eval_joints_pw3d], top_gts[i:i+1,eval_joints_pw3d])[0].mean() * 1000
+                    corr_noTTA_mpjpe_raw = get_mpjpe(top_corr_data[3][i], gt)
+                    corr_noTTA_pa_mpjpe_raw = get_PA_MPJPE(top_corr_data[3][i:i+1,eval_joints_pw3d], top_gts[i:i+1,eval_joints_pw3d])[0].mean() * 1000
+                    corr_mpjpe_raw = get_mpjpe(top_corr_data[4][i], gt)
+                    corr_pa_mpjpe_raw = get_PA_MPJPE(top_corr_data[4][i:i+1,eval_joints_pw3d], top_gts[i:i+1,eval_joints_pw3d])[0].mean() * 1000
+                    bb_E_raw = get_energy(top_corr_data[2][i])
+                    corr_noTTA_E_raw = get_energy(top_corr_data[3][i])
+                    corr_E_raw = get_energy(top_corr_data[4][i])
+
+                    bb_mpjpe_aug = get_mpjpe(top_corr_varying_data[2][i], gt)
+                    bb_pa_mpjpe_aug = get_PA_MPJPE(top_corr_varying_data[2][i:i+1,eval_joints_pw3d], top_gts[i:i+1,eval_joints_pw3d])[0].mean() * 1000
+                    corr_noTTA_mpjpe_aug = get_mpjpe(top_corr_varying_data[3][i], gt)
+                    corr_noTTA_pa_mpjpe_aug = get_PA_MPJPE(top_corr_varying_data[3][i:i+1,eval_joints_pw3d], top_gts[i:i+1,eval_joints_pw3d])[0].mean() * 1000
+                    corr_mpjpe_aug = get_mpjpe(top_corr_varying_data[4][i], gt)
+                    corr_pa_mpjpe_aug = get_PA_MPJPE(top_corr_varying_data[4][i:i+1,eval_joints_pw3d], top_gts[i:i+1,eval_joints_pw3d])[0].mean() * 1000
+                    bb_E_aug = get_energy(top_corr_varying_data[2][i])
+                    corr_noTTA_E_aug = get_energy(top_corr_varying_data[3][i])
+                    corr_E_aug = get_energy(top_corr_varying_data[4][i])
+
+                    print(f'\nImg {i} (id={idx}):')
+                    print(f'Raw Img ------')
+                    print(f'  (PA-MPJPE)\n   BB : {bb_pa_mpjpe_raw:.2f}\n   CNet: {corr_noTTA_pa_mpjpe_raw:.2f}\n   CNet+TTA: {corr_pa_mpjpe_raw:.2f}')
+                    print(f'  (MPJPE)\n   BB : {bb_mpjpe_raw:.2f}\n   CNet: {corr_noTTA_mpjpe_raw:.2f}\n   CNet+TTA: {corr_mpjpe_raw:.2f}')
+                    print(f'  (E)\n   BB : {bb_E_raw:.2f}\n   CNet: {corr_noTTA_E_raw:.2f}\n   CNet+TTA: {corr_E_raw:.2f}')
+                    print(f'Aug Img ------')
+                    print(f'  (PA-MPJPE)\n   BB : {bb_pa_mpjpe_aug:.2f}\n   CNet: {corr_noTTA_pa_mpjpe_aug:.2f}\n   CNet+TTA: {corr_pa_mpjpe_aug:.2f}')
+                    print(f'  (MPJPE)\n   BB : {bb_mpjpe_aug:.2f}\n   CNet: {corr_noTTA_mpjpe_aug:.2f}\n   CNet+TTA: {corr_mpjpe_aug:.2f}')
+                    print(f'  (E)\n   BB : {bb_E_aug:.2f}\n   CNet: {corr_noTTA_E_aug:.2f}\n   CNet+TTA: {corr_E_aug:.2f}')
 
             gt_smpl_params, gts, img_paths, bbxs, cams = dataset.dataset.get_gts_paths_bbxs_cams(top_img_idxs)
             
-
-            top_dataset, top_data_loader, _ = setup_cfg_and_data(config, config.eval_data, data_ids=top_img_idxs)
-            top_results, outputs = gen_preds(config, cfg, top_dataset, top_data_loader, zero_hips=False, save_results=False)
-
-            # # make a new body model to get smpl 24 kpts
-            # from mmhuman3d.models.body_models.builder import build_body_model
-            # body_model= {
-            #     'type': 'GenderedSMPL',
-            #     'keypoint_src': 'smpl_24',
-            #     'keypoint_dst': 'smpl_24',
-            #     'model_path': 'data/body_models/smpl',
-            #     'joints_regressor': 'data/body_models/J_regressor_h36m.npy'
-            # }
-            # body_model = build_body_model(body_model)
-            # import mmhuman3d.utils.transforms as mmtransforms
-            # ee_body_pose = mmtransforms.rotmat_to_ee(torch.FloatTensor(top_results['poses'][0])[None,...])
-            # gt_output = body_model(
-            #     betas=torch.FloatTensor(top_results['betas'][0])[None,...],
-            #     body_pose=ee_body_pose.flatten(1),
-            #     gender=torch.ones(1))
-            
-            
-            # preds = dataset.dataset.get_pred_smpls(outputs)
-            # for this img, save the corrected kpts and smpl params
-            # into a npz file for use in the IK solver
-            # gt_smpl_param = gt_smpl_params[0]
-            # corr_kpts = top_corrs[0]
-            # dict = {'gt_smpl_param': gt_smpl_param, 'corr_kpts': corr_kpts, 
-            #         'pred_smpl_pose': top_results['poses'][0], 'pred_smpl_beta': top_results['betas'][0],}
-            # IK_path = '../../../Minimal-IK/corrected_dict.npz'
-            # np.savez(IK_path, **dict)
-
             # Check if I need to get the hip offsets again, because I didn't save them in the first place :/
             if top_gts[:,0].sum() == 0 and config.dataset != 'HP3D_test':
                 top_dataset, top_data_loader, _ = setup_cfg_and_data(config, config.eval_data, data_ids=top_img_idxs)
@@ -516,11 +591,16 @@ def main():
                 top_preds += hips #/ 1000
                 top_corrs += hips #/ 1000
 
-            # top_preds = top_results['preds'] / 1000
-
             # load the images and overlay poses on them
             imgs = []
-            for img_path in img_paths:
+            for i, img_path in enumerate(img_paths):
+                varying_condition_outpath = f'../../outputs/varying_conditions/{config.backbone}/{config.dataset}'
+                if (task == 'visualize_varying_conditions') and not (plot_raw):
+                    if (config.variation_type == 'occlusion'):
+                        img_path = f'{varying_condition_outpath}/occ_img_{top_img_idxs[i]}.png'
+                    else:
+                        img_path = f'{varying_condition_outpath}/dark_img_{top_img_idxs[i]}.png'
+                    
                 imgs.append(cv2.imread(img_path))
             
             if config.dataset != 'HP3D_test':
@@ -531,66 +611,170 @@ def main():
                 gt_colour = (0,0.75,0)     # (0,1,0)
                 corr_colour = (1.0,0,0)   # (1,0,0)
                 pred_colour = (0,0,0.75) # (1,0.8,0)
-
                 gt_colour_cv = (int(gt_colour[2]*255), int(gt_colour[1]*255), int(gt_colour[0]*255))
                 corr_colour_cv = (int(corr_colour[2]*255), int(corr_colour[1]*255), int(corr_colour[0]*255))
                 pred_colour_cv = (int(pred_colour[2]*255), int(pred_colour[1]*255), int(pred_colour[0]*255))
-                # save the image
+                
+                # Raw Input img
                 img_outpath = '{}/samples/{}/{}_{}_{}_input.png'.format(qualitative_outpath, config.backbone, config.dataset, config.backbone, i)
+                if plot_raw is not None:
+                    if not plot_raw:
+                        img_outpath = img_outpath.replace('samples', 'samples_aug')
                 cv2.imwrite(img_outpath, img)
+
+                # 2D skeleton overlay
                 if config.dataset != 'HP3D_test':
                     # overlay skeletons on img
                     img = img_draw_skeleton(img, gt_proj, limbs, gt_colour_cv, gt_colour_cv)
                     img = img_draw_skeleton(img, corr_proj, limbs, corr_colour_cv, corr_colour_cv)
                     img = img_draw_skeleton(img, pred_proj, limbs, pred_colour_cv, pred_colour_cv)
                     # save the image
-                    img_outpath = '{}/samples/{}/{}_{}_{}_over.png'.format(qualitative_outpath, config.backbone, config.dataset, config.backbone, i)
+                    img_outpath = img_outpath.replace('input', 'over')
                     cv2.imwrite(img_outpath, img)
                 
-                # make 3d plot of the gt, pred, and corr poses
-                import matplotlib.pyplot as plt
-                fig = plt.figure()
-                ax = fig.add_subplot(111, projection='3d')
-                ax.set(xlim=(0.5,-0.5), ylim=(-0.5,0.5), zlim=(-0.7,0.3),
-                       xticklabels=[], yticklabels=[], zticklabels=[],
-                       )
-                ax.view_init(25, -25)
+                # 3D plot of gt, pred, and corr
+                for j, azim in enumerate([-60, 60, 120]):
+                    import matplotlib.pyplot as plt
+                    fig = plt.figure()
+                    ax = fig.add_subplot(111, projection='3d')
+                    ax.set(xlim=(0.5,-0.5), ylim=(-0.5,0.5), zlim=(-0.7,0.3),
+                        xticklabels=[], yticklabels=[], zticklabels=[],
+                        )
+                    ax.view_init(25, azim)
 
-                # plot the skeletons by drawing lines between the appropriate joints
-                plot_gt = gts[i] - gts[i][0]
-                plot_corr = top_corrs[i] - gts[i][0]
-                plot_pred = top_preds[i] - gts[i][0]
-                if config.dataset != 'HP3D_test':
-                    plot_gt = plot_gt @ np.array(cams[i]['rotation_mat'])
-                    plot_corr = plot_corr @ np.array(cams[i]['rotation_mat'])
-                    plot_pred = plot_pred @ np.array(cams[i]['rotation_mat'])
-                for limb in limbs.values():
-                    for k in range(len(limb) - 1):
-                        first = limb == limbs['lleg'] and k == 0
-                        ax.plot3D(plot_gt[limb[k:k+2],0], plot_gt[limb[k:k+2],2], plot_gt[limb[k:k+2],1], color=gt_colour, label='gt' if first else '')
-                        ax.plot3D(plot_corr[limb[k:k+2],0], plot_corr[limb[k:k+2],2], plot_corr[limb[k:k+2],1], color=corr_colour, label='corr_backbone_pred' if first else '')
-                        ax.plot3D(plot_pred[limb[k:k+2],0], plot_pred[limb[k:k+2],2], plot_pred[limb[k:k+2],1], color=pred_colour, label='backbone_pred' if first else '')
-                ax.legend(loc='lower left')
-                # save fig
-                fig_outpath = '{}/samples/{}/{}_{}_{}_3d.png'.format(qualitative_outpath, config.backbone, config.dataset, config.backbone, i)
-                # FINDING RIGHT ANGLE FOR VIEW
-                if config.backbone == 'cliff' and i in [2,8,9,13,23 ]: #[4, 9, 16, 18, 19, 20, 22]:
-                    foo = 5
-                if config.backbone == 'pare' and i in [40, ]: #[2, 38, 40, 42,43,]: #[8,17,24,29 ]: 
-                #[4,12,17,49]: #[0,6,10,11,14,29 ]: #[0,4,10,13,29,34,36, ]: #[0, 4, 15, 18]:
-                    foo = 5
-                
-                # if i == 0:
-                #     # for this img, save the corrected kpts and smpl params
-                #     # into a npz file for use in the IK solver
-                #     gt_smpl_param = gt_smpl_params[0]
-                #     corr_kpts = top_corrs[0]
-                #     dict = {'gt_smpl_param': gt_smpl_param, 'corr_kpts': corr_kpts}
-                #     IK_path = '../Minimal-IK/corrected_dict.npz'
-                #     np.savez('../../../Minimal-IK/corrected_dict.npz', **dict)
+                    # plot the skeletons by drawing lines between the appropriate joints
+                    plot_gt = gts[i] - gts[i][0]
+                    plot_corr = top_corrs[i] - gts[i][0]
+                    plot_pred = top_preds[i] - gts[i][0]
+                    if (config.dataset != 'HP3D_test') and (cams[i] is not None):
+                        plot_gt = plot_gt @ np.array(cams[i]['rotation_mat'])
+                        plot_corr = plot_corr @ np.array(cams[i]['rotation_mat'])
+                        plot_pred = plot_pred @ np.array(cams[i]['rotation_mat'])
+                    for limb in limbs.values():
+                        for k in range(len(limb) - 1):
+                            first = limb == limbs['lleg'] and k == 0
+                            ax.plot3D(plot_gt[limb[k:k+2],0], plot_gt[limb[k:k+2],2], plot_gt[limb[k:k+2],1], color=gt_colour, label='gt' if first else '')
+                            ax.plot3D(plot_corr[limb[k:k+2],0], plot_corr[limb[k:k+2],2], plot_corr[limb[k:k+2],1], color=corr_colour, label='corr_backbone_pred' if first else '')
+                            ax.plot3D(plot_pred[limb[k:k+2],0], plot_pred[limb[k:k+2],2], plot_pred[limb[k:k+2],1], color=pred_colour, label='backbone_pred' if first else '')
+                    ax.legend(loc='lower left')
+                    # save fig
+                    fig_outpath = '{}/samples/{}/{}_{}_{}_3d_{}.png'.format(qualitative_outpath, config.backbone, config.dataset, config.backbone, i, j)                    
 
-                plt.savefig(fig_outpath, bbox_inches='tight', dpi=300)
-                plt.close()
+                    if plot_raw is not None:
+                        if not plot_raw:
+                            fig_outpath = fig_outpath.replace('samples', 'samples_aug')
+
+                    plt.savefig(fig_outpath, bbox_inches='tight', dpi=300)
+                    plt.close()
+
+        elif task == 'get_varying_conditions':
+            top_img_idxs = config.variation_top_img_idxs[config.dataset]
+
+            gt_smpl_params, gts, img_paths, bbxs, cams = dataset.dataset.get_gts_paths_bbxs_cams(top_img_idxs)
+
+            # save the imgs
+            varying_condition_outpath = f'../../outputs/varying_conditions/{config.backbone}/{config.dataset}'
+            if config.dataset == 'PW3D':
+                varying_condition_dataset_outpath = 'ESCAPE_varying_conditions_imageFiles'
+                dataset_path = './data/datasets/pw3d/' #config.cnet_data_path + config.dataset.lower()
+            else:
+                raise NotImplementedError
+            for i, img_path in enumerate(img_paths):
+                img = cv2.imread(img_path)
+
+                # DEBUG: try out occlusions
+                img_occ = mmlab_vc.add_occlusion(img, top_img_idxs[i], 
+                                                 type='feet', dataset=config.dataset.lower())
+                cv2.imwrite(f'{varying_condition_outpath}/occ_img_{top_img_idxs[i]}.png', img_occ)
+                cv2.imwrite(f'{dataset_path}/{varying_condition_dataset_outpath}/occ_img_{top_img_idxs[i]}.png', img_occ)
+
+                # Raw img
+                cv2.imwrite(f'{varying_condition_outpath}/raw_img_{top_img_idxs[i]}.png', img)
+                # Darkened img
+                dark_alpha = 0.15
+                img = cv2.addWeighted(img, dark_alpha, np.zeros_like(img), 0, 0)
+                cv2.imwrite(f'{varying_condition_outpath}/dark_img_{top_img_idxs[i]}.png', img)
+                cv2.imwrite(f'{dataset_path}/{varying_condition_dataset_outpath}/dark_img_{top_img_idxs[i]}.png', img)
+
+
+            top_dataset, top_data_loader, _ = setup_cfg_and_data(config, config.eval_data, data_ids=top_img_idxs)
+            # top_results, outputs = gen_preds(config, cfg, top_dataset, top_data_loader, zero_hips=False, save_results=False)
+
+            # set dataset paths to the new varying conditions paths
+            for i, img_idx in enumerate(top_img_idxs):
+                if (config.variation_type == 'occlusion'):
+                    top_dataset.dataset.human_data['image_path'][img_idx] = f'{varying_condition_dataset_outpath}/occ_img_{img_idx}.png'
+                else:
+                    top_dataset.dataset.human_data['image_path'][img_idx] = f'{varying_condition_dataset_outpath}/dark_img_{img_idx}.png'
+            # Get results for the varying conditions, and save to a new "dataset" for cnet
+            top_results, outputs = gen_preds(config, cfg, top_dataset, top_data_loader, zero_hips=False, save_results=False)
+
+            # save the varying conditions preds to a new dataset
+            out_path = config.cnet_dataset_path + '_varying_conditions.npy'
+            print("Saving varying conditions pred dataset to {}".format(out_path))
+            # change to CNet format
+            scale = 1000
+            backbone_preds = (top_results['preds'] / scale).reshape(top_results['preds'].shape[0], -1)
+            target_xyz_17s = (top_results['gts'] / scale).reshape(top_results['gts'].shape[0], -1)
+            img_idss = np.repeat(np.array(top_results['ids']).reshape(-1,1), backbone_preds.shape[1], axis=1)
+
+            np.save(out_path, np.array([backbone_preds, target_xyz_17s, img_idss,]))
+
+            foo = 5
+
+        elif task == 'get_varying_conditions_miniset':
+            '''
+            '''
+            top_img_idxs = mmlab_vc.vcd_samples_idxs
+            gt_smpl_params, gts, img_paths, bbxs, cams = dataset.dataset.get_gts_paths_bbxs_cams(top_img_idxs)
+            # save the imgs
+            varying_condition_outpath = f'../../outputs/varying_conditions/{config.backbone}/{config.dataset}'
+            if config.dataset == 'PW3D':
+                varying_condition_dataset_outpath = 'ESCAPE_varying_conditions_miniset_imageFiles'
+                dataset_path = './data/datasets/pw3d/' #config.cnet_data_path + config.dataset.lower()
+            else:
+                raise NotImplementedError
+            for i, img_path in enumerate(img_paths):
+                img = cv2.imread(img_path)
+
+                # Occlusion
+                img_occ = mmlab_vc.add_occlusion(img, top_img_idxs[i], 
+                                                 type='feet', dataset=config.dataset.lower())
+                # cv2.imwrite(f'{varying_condition_outpath}/occ_img_{top_img_idxs[i]}.png', img_occ)
+                cv2.imwrite(f'{dataset_path}/{varying_condition_dataset_outpath}/occ_img_{top_img_idxs[i]}.png', img_occ)
+
+                # Raw img
+                # cv2.imwrite(f'{varying_condition_outpath}/raw_img_{top_img_idxs[i]}.png', img)
+                # Darkened img
+                img = cv2.addWeighted(img, config.variation_darkening_alpha, np.zeros_like(img), 0, 0)
+                # cv2.imwrite(f'{varying_condition_outpath}/dark_img_{top_img_idxs[i]}.png', img)
+                cv2.imwrite(f'{dataset_path}/{varying_condition_dataset_outpath}/dark_img_{top_img_idxs[i]}.png', img)
+            
+            # set dataset paths to the new varying conditions paths
+            top_dataset, top_data_loader, _ = setup_cfg_and_data(config, config.eval_data, data_ids=top_img_idxs)
+            for i, img_idx in enumerate(top_img_idxs):
+                if (config.variation_type == 'occlusion'):
+                    raise NotImplementedError
+                else:
+                    top_dataset.dataset.human_data['image_path'][img_idx] = f'{varying_condition_dataset_outpath}/dark_img_{img_idx}.png'
+            # Get results for the varying conditions, and save to a new "dataset" for cnet
+            top_results, outputs = gen_preds(config, cfg, top_dataset, top_data_loader, zero_hips=False, save_results=False)
+
+            # save the varying conditions preds to a new dataset
+            if config.variation_type == 'darkening':
+                out_path = f'{config.cnet_dataset_path}_varying_conditions_miniset_darkening_{config.variation_darkening_alpha}.npy'
+            else:
+                raise NotImplementedError
+
+            print("Saving varying conditions pred dataset to {}".format(out_path))
+            # change to CNet format
+            scale = 1000
+            backbone_preds = (top_results['preds'] / scale).reshape(top_results['preds'].shape[0], -1)
+            target_xyz_17s = (top_results['gts'] / scale).reshape(top_results['gts'].shape[0], -1)
+            img_idss = np.repeat(np.array(top_results['ids']).reshape(-1,1), backbone_preds.shape[1], axis=1)
+
+            np.save(out_path, np.array([backbone_preds, target_xyz_17s, img_idss,]))
+
 
         elif task != 'gen_preds':   # not the cleanest way to do this
             raise NotImplementedError

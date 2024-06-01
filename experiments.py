@@ -5,15 +5,16 @@
 
 # print("\n", os.getcwd(), "\n", sys.path, "\n")
 
-from torchvision import transforms as T
-det_transform = T.Compose([T.ToTensor()])
+import numpy as np
 
 from datasets.hybrik import make_hybrik_pred_dataset
 from cnet.full_body import adapt_net
 from core.cnet_eval import eval_gt
 from config import get_config
 
+import utils.output_reporting as output_reporting
 from utils.output_reporting import plot_TTT_loss, test_trainsets, plot_energies, print_test_summary
+from utils.mmlab_varying_conditions import vcd_samples_idxs
 
 
 def test(cnet, R_cnet, config, print_summary=True):
@@ -107,6 +108,45 @@ def main_worker(config):
         elif task == 'get_inference_time':
             from utils.inference_timing import get_inference_time
             get_inference_time(config, cnet, R_cnet)
+
+        elif task == 'eval_varying_conditions':
+            # Make sure we adapt on all samples
+            config.energy_thresh = 800000
+            # adjust testset path to get the varying conditions subset samples
+            for testset in config.testsets:
+                config.testset_info[testset]['paths'] = [config.testset_info[testset]['paths'][0].replace('test', 'test_varying_conditions')]
+                config.test_eval_subsets[testset] = [i for i in range(len(config.effective_adapt_idxs_pw3d))]
+            test(cnet, R_cnet, config)
+        elif task == 'eval_raw_conditions':
+            # load up the testset and set the subset to be the config.effective_adapt_idxs_pw3d
+            if (len(config.testsets) > 1) or ((len(config.testsets) == 1) and (config.testsets[0] != 'PW3D')):
+                raise NotImplementedError
+            # Make sure we adapt on all samples
+            config.energy_thresh = 800000
+            # Adjust subset to be the desired indices
+            test_data_ = np.load(config.testset_info['PW3D']['paths'][0])
+            img_idxs = test_data_[2,:,0]
+            config.test_eval_subsets['PW3D'] = np.array([np.where(img_idxs == idx)[0] for idx in config.effective_adapt_idxs_pw3d]).reshape(-1)
+            test(cnet, R_cnet, config)
+        elif task == 'eval_varying_conditions_miniset':
+            # adjust testset path to get the varying conditions miniset
+            for testset in config.testsets:
+                vcd_title = f'test_varying_conditions_miniset_{config.vcd_variation_type}'
+                config.testset_info[testset]['paths'] = [config.testset_info[testset]['paths'][0].replace('test', vcd_title)]
+                config.test_eval_subsets[testset] = [i for i in range(len(config.effective_adapt_idxs_pw3d))]
+            # set the varying conditions subset samples
+            test_data_ = np.load(config.testset_info['PW3D']['paths'][0])
+            img_idxs = test_data_[2,:,0]
+            config.test_eval_subsets['PW3D'] = np.array([np.where(img_idxs == idx)[0] for idx in vcd_samples_idxs]).reshape(-1)
+            test(cnet, R_cnet, config)
+        elif task == 'eval_raw_conditions_miniset':
+            # set the varying conditions subset samples
+            test_data_ = np.load(config.testset_info['PW3D']['paths'][0])
+            img_idxs = test_data_[2,:,0]
+            config.test_eval_subsets['PW3D'] = np.array([np.where(img_idxs == idx)[0] for idx in vcd_samples_idxs]).reshape(-1)
+            test(cnet, R_cnet, config)
+        elif task == 'vcd_plot_E':
+            output_reporting.vcd_plot_E_dists(config)
         else:
             raise NotImplementedError
     

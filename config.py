@@ -50,12 +50,22 @@ def get_config():
 
     # What experiments to perform
     config.tasks = ['test']
+    # config.tasks = ['train_CNet', 'test']
+    # config.tasks = ['train_CNet', 'make_RCNet_trainset', 'train_RCNet', 'test']
+    # config.tasks = ['make_RCNet_trainset', 'train_RCNet', 'test']
+    # config.tasks = ['eval_raw_conditions']    # eval_varying_conditions, eval_raw_conditions
+    config.tasks = ['eval_raw_conditions_miniset']    # eval_varying_conditions_miniset, eval_raw_conditions_miniset
+    config.tasks = ['vcd_plot_E']
 
     # What backbone to use
     config.backone = 'pare' # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff',
 
+    # What data to use
+    config.trainsets = ['MPii', 'HP3D', 'h36m'] # 'MPii', 'HP3D', 'h36m'
+    config.testsets = ['PW3D', ]#'HP3D',]
+
     # Test time adaptation and Energy-based sample selection
-    config.test_adapt = False              # test with test-time adaptation?
+    config.test_adapt = True              # test with test-time adaptation?
     config.TTT_e_thresh = True            # use Energy function to select samples for adaptation? (adapt if below thresh)
     config.energy_thresh = 800            # dont correct samples with energy above this
 
@@ -75,12 +85,43 @@ def get_config():
         config.TTT_errscale = 1e2
     if config.TTT_loss == 'consistency':        
         config.test_adapt_lr = 5e-4
-        config.adapt_steps = 2 
+        config.adapt_steps = 2
         config.TTT_errscale = 1e2
 
     # Other
-    config.include_target_kpt_errs = False  # report individual target kpt erors?
+    config.include_target_kpt_errs = True  # report individual target kpt erors?
     config.use_cnet = True                  # use CNet at test time?
+
+    # For varying condition ablations on PW3D
+    config.vcd_variation_type = 'darkening_0.1'     # darkening_0.01, darkening_0.1, darkening_0.3, darkening_0.5
+    config.num_avging_runs = 5 #100
+    config.effective_adapt_idxs_pw3d = [29000, 32746, 2620, 3163, 2966,  
+                 22481,  12120, 16181, 4606, 20253,
+                 7031, 5804, 19750, 30116, 28069, 3352,
+                 13552, 21284, 33710, 26749, 10585
+                 ]
+    
+    # [5392, 5842,  30053, 29994,  5,  34268, 21783, 13231, 24375, 19679, 11239]
+    # [5385, 31051, 2162, 4153, 8149]
+    # [5385, 21007, 31360, 19037, 14454, 
+    #             19006, 31051, 20327, 15184, 6817, 
+    #             24949, 29978, 2162, 15166, 24974, 
+    #             29541, 2018, 32225, 31357, 7822, 
+    #             4153, 8149]
+    # [4153, 7, 
+    #             11196, 34278, 24948, 
+    #             21003, 5860, 13399, 35270,
+    #             4853, 8149,]
+    
+
+    #   [6650, 15171, 15175, 31353, 29539, 4153, 7, 24810, 6786,
+    #    11196, 30375, 34278, 24948, 29974,
+    #    28266, 21003, 5860, 29551, 24046, 13399, 35270, 14342,
+    #    16975,  4853, 15136, 24964,  4878,  8149, 
+    #    24997, 21775, 15186,  4152,  2004, 13295,  5388,
+    #    32059, 33431, 15209,  2140, 30527, 25660,
+    #    13249,  8607, 15193,  6807, 13472, 13371,
+    #    24490,  6793, 25591]
 
     ######################################################################################
     ######################################################################################
@@ -113,13 +154,11 @@ def config_data(config):
     '''
     # Data
     config.train_backbones = [config.backone]  
-    config.trainsets = ['MPii', 'HP3D',] # 'MPii', 'HP3D', 
     config.trainsets_str = '_'.join(config.trainsets)
     config.val_sets = []
     config.test_backbones = config.train_backbones 
-    config.testsets = ['PW3D', 'HP3D',]
 
-    config.test_eval_limit = 120_000   # limit test samples for debug
+    config.test_eval_limit = 120_000 #120_000   # limit test samples for debug
     config.test_eval_subsets = {}
     for testset in config.testsets:
         if testset in ['PW3D', 'HP3D']:
@@ -147,11 +186,11 @@ def config_data(config):
 
     # trainsets
     config.backbone_trainset_lims = {
-        'hybrik': {'MPii': None, 'HP3D': None}, # 50_000, None},
-        'spin': {'MPii': None, 'HP3D': None}, # 50_000,},
-        'cliff': {'MPii': None,'HP3D': None,}, # 50_000,},
-        'pare': {'MPii': None, 'HP3D': None}, # 50_000,},
-        'bal_mse': {'MPii': None,'HP3D': None}, # 50_000,},
+        'hybrik': {'MPii': None, 'HP3D': None, 'h36m': None,}, # 50_000, None},
+        'spin': {'MPii': None, 'HP3D': None, 'h36m': None,}, # 50_000,},
+        'cliff': {'MPii': None,'HP3D': None, 'h36m': None,}, # 50_000,},
+        'pare': {'MPii': None, 'HP3D': None, 'h36m': None,}, # 50_000,},
+        'bal_mse': {'MPii': None,'HP3D': None, 'h36m': None,}, # 50_000,},
     }
     config.backbone_trainset_ids = {
         'hybrik': {'MPii': None, 'HP3D': None},

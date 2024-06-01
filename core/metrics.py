@@ -1,8 +1,8 @@
 import numpy as np
 import utils.pose_processing as pose_processing
 
-def get_PA_MPJPE(preds, gts, config):
-    pa_mpjpe = np.zeros((gts.shape[0], len(config.EVAL_JOINTS)))
+def get_PA_MPJPE(preds, gts):
+    pa_mpjpe = np.zeros((gts.shape[0], gts.shape[1]))
     err = np.zeros((gts.shape[0], 3))
     for i, (pred, gt) in enumerate(zip(preds, gts)):
         pred_pa = pose_processing.compute_similarity_transform(pred.copy(), gt.copy(), rescale=True)
@@ -15,11 +15,11 @@ def get_PA_MPJPE(preds, gts, config):
 
 def get_P1_P2(backbone_preds, corr_preds, gts, 
               corr_idxs,
-              num_tails, config):
+              num_tails):
     '''
     '''
-    backbone_pa_mpjpe, backbone_err = get_PA_MPJPE(backbone_preds, gts, config)
-    corr_pa_mpjpe, corr_err = get_PA_MPJPE(corr_preds, gts, config)
+    backbone_pa_mpjpe, backbone_err = get_PA_MPJPE(backbone_preds, gts)
+    corr_pa_mpjpe, corr_err = get_PA_MPJPE(corr_preds, gts)
     
     backbone_pa_mpjpe = backbone_pa_mpjpe.mean(1)
     bb_pa_mpjpe_tail_idxs = [np.argpartition(backbone_pa_mpjpe, -num_tails[i])[-num_tails[i]:] for i in range(len(num_tails))]

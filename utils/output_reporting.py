@@ -135,6 +135,44 @@ def plot_E_sep(config, task, dataset, cnet=False):
     if save_dir is not None:
         plt.savefig(save_dir) 
 
+def vcd_plot_E_dists(config,):
+    '''
+    For varying conditions miniset, plot the E dists for raw imgs and for varying conditions
+    '''
+    dataset = 'PW3D'
+    backbone = 'PARE'
+    # load up the varying conditions miniset energies
+    energies_outpath = '../../outputs/energies/'
+
+    vcd_all_variation_types = ['', '_darkening_0.01', '_darkening_0.1', '_darkening_0.3', '_darkening_0.5']
+    vcd_variation_labels = ['raw', 'darkening_0.01', 'darkening_0.1', 'darkening_0.3', 'darkening_0.5']
+
+    energies_losses = []
+    for variation_type in vcd_all_variation_types:
+        testset_path = config.testset_info['PW3D']['paths'][0].replace('test', f'test_varying_conditions_miniset{variation_type}')
+        energies_loadpath = energies_outpath +  dataset + '_'
+        backbone_name = testset_path.split('/')[-1][:-4]
+        energies_loadpath +=  '_'.join([backbone_name, 'energies.npy'])
+
+        energies_losses_ = np.load(energies_loadpath)
+        energies_losses.append(energies_losses_)
+
+    save_dir = '../../outputs/energies/plots/' + f'{dataset}/{dataset}_{backbone}_test_miniset_all_variations_'
+    save_dir += 'E_histogram.png'
+    title = f'{dataset} Varying Condition {config.test_backbones[0].upper()} Backbone Prediction Energies'
+
+    # Plotting
+    print(f"Plotting Energies + Losses to {save_dir}\n")
+    num_bins = 100
+    fig, ax = plt.subplots()
+    for i, variation_label in enumerate(vcd_variation_labels):
+        ax.hist(energies_losses[i][:,0], label=variation_label, bins=num_bins, alpha=0.5)
+        print(f'{variation_label} median/mean/std E: {np.median(energies_losses[i][:,0]):.5}, {np.mean(energies_losses[i][:,0]):.5}, {np.std(energies_losses[i][:,0]):.4}')
+    ax.set(title=title, xlabel='E', ylabel='Count')
+    ax.legend()
+    plt.savefig(save_dir)
+
+
 
 def plot_energies(config, task):
     ''' 
