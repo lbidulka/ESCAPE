@@ -69,7 +69,7 @@ class adapt_net():
         self.config.ep_print_freq = 5
     
     def __call__(self, pose_in, ret_corr_idxs=False, ret_E=False):
-        cnet_in = pose_in.clone().detach()
+        cnet_in = pose_in.clone()
         out_pred = cnet_in.clone().detach()
 
         E_in = None

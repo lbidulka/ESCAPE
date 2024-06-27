@@ -87,7 +87,7 @@ def eval_gt(cnet, R_cnet, config,
         backbone_pred = output.pred_xyz_jts_17.reshape(output.pred_xyz_jts_17.shape[0], -1, 3)
         if config.use_cnet:
             # Only do TTT if sample is hard sample
-            if test_adapt and config.TTT_e_thresh:
+            if config.test_adapt and config.TTT_e_thresh:
                 # dont correct samples with energy above threshold
                 E = cnet._energy(backbone_pred - backbone_pred[:,:1])
                 dont_TTT_idxs = E > config.energy_thresh
@@ -129,7 +129,7 @@ def eval_gt(cnet, R_cnet, config,
                 corrected_pred, batch_corr_idxs = cnet(cnet_in, ret_corr_idxs=True)
                 
                 # Log attempted TTT samples if using energy threshold for TTT
-                if test_adapt and config.TTT_e_thresh:
+                if config.test_adapt and config.TTT_e_thresh:
                     corr_idxs.append(TTT_idxs.cpu().numpy())
                 else:
                     corr_idxs.append(batch_corr_idxs)

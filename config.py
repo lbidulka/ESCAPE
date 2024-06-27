@@ -52,10 +52,10 @@ def get_config():
     config.tasks = ['test']
 
     # What backbone to use
-    config.backone = 'pare' # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff',
+    config.backone = 'bal_mse' # 'hybrik', 'spin', 'pare', 'bal_mse', 'cliff',
 
     # Test time adaptation and Energy-based sample selection
-    config.test_adapt = False              # test with test-time adaptation?
+    config.test_adapt = True              # test with test-time adaptation?
     config.TTT_e_thresh = True            # use Energy function to select samples for adaptation? (adapt if below thresh)
     config.energy_thresh = 800            # dont correct samples with energy above this
 
@@ -101,7 +101,7 @@ def get_config():
         config.rcnet_targets += RCNET_TARGET_NAMES[name]
 
     # CUDA
-    config.device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    config.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     torch.backends.cudnn.enabled = True
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
@@ -117,7 +117,7 @@ def config_data(config):
     config.trainsets_str = '_'.join(config.trainsets)
     config.val_sets = []
     config.test_backbones = config.train_backbones 
-    config.testsets = ['PW3D', 'HP3D',]
+    config.testsets = ['PW3D', 'HP3D']
 
     config.test_eval_limit = 120_000   # limit test samples for debug
     config.test_eval_subsets = {}
